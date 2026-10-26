@@ -1,0 +1,15 @@
+node_modules/
+.tmp/
+coverage/
+*.tgz
+.DS_Store
+.env
+.env.*
+connection.json
+status.json
+runner.state.json
+adapter-state.json
+native-setup-receipt.json
+native-copy-receipt.json
+backups/
+*.log
