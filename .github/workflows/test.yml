@@ -17,3 +17,4 @@ jobs:
           bun-version: ${{ matrix.bun }}
       - run: bun test
       - run: bun run check
+      - run: bun run vendor:verify

@@ -2,9 +2,24 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.1.0 支持 macOS。** 核心接入已在 Kimi 3.2.20、Magpie 0.1.1587、Magpie Bun 1.4.4 上验证。Windows / Linux 的原生模式尚未适配，不承诺跨平台可用。
+**v0.2.0 支持 macOS。** 核心接入已在 Kimi 3.2.20、Magpie 0.1.1587、Magpie Bun 1.4.4 上验证。Windows / Linux 的原生模式尚未适配，不承诺跨平台可用。
 
 不修改 Magpie 或 Kimi 的安装包、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里；日常只需打开 Magpie 和 Kimi。
+
+## 与通用核心的关系
+
+本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。
+
+| 位置 | 作用 |
+| --- | --- |
+| `vendor/kimi-work-gateway/` | 核心库的固定副本：监听、鉴权、目录、转发、DNS、准备流程 |
+| `vendor/VENDOR.json` | 核心版本与每个文件的 SHA-256；`bun run vendor:verify` 与 CI 都会校验 |
+| `magpie-backend.mjs` | 把 Magpie 的模型目录翻译成核心模型，并把请求发回 Magpie 网关 |
+| `native-byok.mjs` | 兼容包装器，保留原有调用方式（`configure({url, key, port})`、`nativeCatalog`） |
+
+升级核心时执行 `bun run vendor:sync`（脚本在 `scripts/vendor-core.mjs`），再让测试与校验通过。插件不联网拉取核心，也不在安装时构建。
+
+模型走哪个接口由 **模型 ID 的最后一段**决定：以 `kimi-` 开头走 Chat Completions，其余走 Responses。这与 Kimi 自己的判断一致；名字和协议对不上时模型会在导入阶段被静默丢弃，核心会直接拒绝这种配置。
 
 > 首次接入涉及本机配置：Kimi 的隐藏 BYOK 入口、Kimi 原生网关设置，以及 `/etc/resolver/dev.msh.team` 单域名解析。它不是普通“开发者模式”，也不是零配置接入。准备操作必须显式触发，并由 macOS 管理员授权；不会修改全局 DNS、hosts、代理、证书或防火墙。
 
@@ -119,6 +134,7 @@ SETUP_AT=$(($(date +%s) * 1000))
 - DeepSeek 经同一插件网关完成真实流式调用，HTTP 200；这项是 HTTP 客户端验证，不等同于第二次 Work 界面发送。
 - Kimi `app.asar`、`Info.plist` 哈希与接入前一致，`codesign --verify --deep --strict` 通过。
 - 分享版一次性准备模块通过隔离目录与模拟管理员调用验证；既有单域名 DNS 实际配置验证来自本机接入。CI 不会弹出管理员窗口或连接真实模型。
+- 0.2.0 把接入逻辑换成本仓库 `vendor/kimi-work-gateway/` 内的固定核心副本。升级前所在机器的真实接入状态、Kimi 菜单与 resolver 未改动；兼容包装器与原接口一致，原有 15 项原生行为测试全部保留并通过。
 - Kimi 后续版本的 BYOK 格式、隐藏入口和可用性检查可能变化；本版只声明上述已验证版本。
 
 开发验证：
@@ -126,15 +142,16 @@ SETUP_AT=$(($(date +%s) * 1000))
 ```sh
 bun test
 bun run check
+bun run vendor:verify
 bun pm pack
 ```
 
-要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。发布包的 38 项测试在 Bun 1.4.2、1.4.4 均通过，CI 覆盖两个版本。安装了对应 Kimi 的 macOS 会额外验证其纯模型目录解析契约；其他环境自动跳过该项。测试使用临时目录与合成凭证。
+要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。发布包的 41 项测试、315 个断言在 Bun 1.4.2、1.4.4 均通过，CI 覆盖两个版本并校验 vendor 哈希。安装了对应 Kimi 的 macOS 会额外验证其纯模型目录解析契约；其他环境自动跳过该项。测试使用临时目录与合成凭证。
 
 开发时可用隔离的 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 测试 Magpie 插件安装与元数据加载，并把 `MAGPIE_KIMI_DATA_HOME` 指向绝对路径，隔离 Bun 适配器的状态和 Kimi 数据查找。Agent 定义仍声明正常的用户目录，所以这种测试实例**不要打开 Agent 接入开关、同步资源库或执行首次准备**。需要完整隔离接入测试时使用独立系统用户。日常使用不要设置该变量。
 
 ## 来源与许可证
 
-基于 MIT 项目 [`@magpie-community/agent-kimi-desktop` 0.1.3](https://github.com/magpie-community/plugins/tree/main/packages/kimi-desktop)，保留上游适配器、资源库实现及版权。此仓库新增原生 BYOK 目录/转发、单域名 DNS、原生请求兼容、一次性准备及相关验证；未把上游已有功能宣称为本仓库原创。许可证见 [LICENSE](LICENSE)。
+基于 MIT 项目 [`@magpie-community/agent-kimi-desktop` 0.1.3](https://github.com/magpie-community/plugins/tree/main/packages/kimi-desktop)，保留上游适配器、资源库实现及版权。此仓库新增原生 BYOK 目录/转发、单域名 DNS、原生请求兼容、一次性准备及相关验证；未把上游已有功能宣称为本仓库原创。接入核心现由独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway) 提供，`vendor/` 内为固定副本。许可证见 [LICENSE](LICENSE)。
 
 本项目是独立社区插件，与 Magpie 和 Kimi 官方无隶属关系。[Magpie 插件文档](https://usemagpie.ai/docs/zh/plugins) 说明 GitHub Topic `magpie-plugin` 的发现规则；设置 Topic 不代表官方审核或推荐。

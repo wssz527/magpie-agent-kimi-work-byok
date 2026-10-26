@@ -1,0 +1,17 @@
+{
+  "name": "kimi-work-gateway",
+  "version": "0.1.0",
+  "files": {
+    "config.mjs": "ec355a85b4d9279258e794a1625153c1f50a74399966bb859e303668b7dc2a90",
+    "gateway.mjs": "341b22adf86a715e2b479a30378ce20d59c17eab89b0abf3bb4979ea406edd09",
+    "index.mjs": "51951af5965f0bb22630d3b0e5903afdbf39c2aaf6eb1121daf09cd8e37401fe",
+    "instructions.mjs": "71b9f45b82ed49f5133b75d70185a82e33dd1d901bf2046a214750825b84eaf2",
+    "native-clipboard.mjs": "3b8d47c75c0bd2cb866766f47e61751e3314f60eff3c160c214b099533724039",
+    "native-dns.mjs": "90f5fdcdfd0507f93d1d2952294755425e0d9f6bf00ed42f59cf766b6bc15f23",
+    "native-setup.mjs": "a06e7a733c49f7370acbe45de90c3cfe3cec38007682986dd52e670645e99804",
+    "native-status.mjs": "72456c35b07da935d3cf8abdad7e4d5fd312d7d3de9bd0bd509f7bfaa2ff32ec",
+    "openai-backend.mjs": "0f18652d6af6a2ad4d8612631933076938b1247654d5684194714bb347f5cfef",
+    "paths.mjs": "2bca4cc95c09c733c2bb97cba23e6ace8167c06ce6a5a447a50477452c530f23",
+    "LICENSE": "0264acda9d55101e4809de24520539a371ff904cf84fc164bca909b8bced5754"
+  }
+}
