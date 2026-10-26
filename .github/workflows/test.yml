@@ -7,10 +7,13 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        bun: [1.4.2, 1.4.4]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.4
+          bun-version: ${{ matrix.bun }}
       - run: bun test
       - run: bun run check
