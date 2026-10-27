@@ -4,9 +4,9 @@ import { KimiAdapter } from './adapter.mjs';
 import { NativeByokGateway } from './native-byok.mjs';
 import { NativeSetupProbe } from './native-status.mjs';
 import { copySetupToken } from './native-clipboard.mjs';
-import { NativeSetup, DEFAULT_HOSTS, hostsEntry } from './native-setup.mjs';
+import { NativeSetup, defaultHostsPath, hostsEntry } from './native-setup.mjs';
 import { NativeByokDNS, BYOK_DNS_PORT, resolverConfiguration } from './native-dns.mjs';
-import { inspect as inspectKimiContract } from './vendor/kimi-work-gateway/kimi-contract.mjs';
+import { inspect as inspectKimiContract, contractFingerprint } from './vendor/kimi-work-gateway/kimi-contract.mjs';
 
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 const activeCount = value => Array.isArray(value) ? value.length : Number(value) || 0;
@@ -82,7 +82,7 @@ export class LocalKimiAdapter extends KimiAdapter {
           // Windows has no per-domain resolver files and needs none: Kimi
           // resolves the name through the hosts file, which `prepare` wrote.
           // There is deliberately no UDP listener here.
-          resolver = { path: DEFAULT_HOSTS, content: hostsEntry() };
+          resolver = { path: defaultHostsPath(), content: hostsEntry() };
           await this.nativeDNS.stop();
         } else if (process.platform === 'darwin') {
           const port = settings.dns.port ?? BYOK_DNS_PORT;
@@ -108,16 +108,21 @@ export class LocalKimiAdapter extends KimiAdapter {
         : !setup.revealed ? 'native_byok_waiting_setup'
           : !imported ? 'native_byok_waiting_import'
             : runner?.lifecycleStatus !== 'running' ? 'waiting_kimi' : 'native_byok_ready';
-      // Cached for a minute: the probe parses the installed bundle, which is
-      // too expensive to repeat on every tick.
-      if (!this.compat || Date.now() - this.compat.at > 60000) {
-        try { this.compat = { at: Date.now(), value: inspectKimiContract() }; }
-        catch { this.compat = { at: Date.now(), value: { state: 'unverified', reason: 'probe_failed' } }; }
+      const models = this.nativeGateway.models;
+      const compatKey = JSON.stringify([(this.options.contractFingerprint || contractFingerprint)(), models]);
+      if (!this.compat || this.compat.key !== compatKey || Date.now() - this.compat.at > 60000) {
+        let value;
+        try { value = (this.options.inspectKimiContract || inspectKimiContract)({ models }); }
+        catch { value = { state: 'unverified', reason: 'probe_failed' }; }
+        this.compat = { at: Date.now(), key: compatKey, value };
       }
       this.report(code, {
-        mode: 'native-byok', gatewayReady: true, url, models: this.nativeGateway.models.length,
+        mode: 'native-byok', gatewayReady: true, url, models: models.length,
         setup: { ...setup, imported }, dnsListening: Boolean(this.nativeDNS.socket),
         compat: { state: this.compat.value.state, version: this.compat.value.version ?? null,
+          scope: 'active-models', modelCount: models.length,
+          ...(this.compat.value.accepted ? { accepted: this.compat.value.accepted.length } : {}),
+          ...(this.compat.value.skipped ? { skipped: this.compat.value.skipped } : {}),
           ...(this.compat.value.reason ? { reason: this.compat.value.reason } : {}) },
         preparation: this.nativeSetup?.result,
         lastCatalogRequest: this.nativeGateway.lastCatalogRequest,

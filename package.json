@@ -35,6 +35,8 @@
     "vendor/VENDOR.json",
     "scripts/vendor-core.mjs",
     "scripts/check.mjs",
+    "scripts/verify-package.mjs",
+    "entry.test.mjs",
     "kimi-desktop.test.mjs",
     "native-byok.test.mjs",
     "native-contract.test.mjs",

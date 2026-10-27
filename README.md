@@ -17,7 +17,7 @@
 | `magpie-backend.mjs` | 把 Magpie 的模型目录翻译成核心模型，并把请求发回 Magpie 网关 |
 | `native-byok.mjs` | 兼容包装器，保留原有调用方式（`configure({url, key, port})`、`nativeCatalog`） |
 
-升级核心时执行 `bun run vendor:sync`（脚本在 `scripts/vendor-core.mjs`），再让测试与校验通过。插件不联网拉取核心，也不在安装时构建。
+升级核心时执行 `bun run vendor:sync ../kimi-work-gateway`，将相邻的核心仓库路径作为参数，再运行测试与哈希校验。其他目录布局请传入对应的核心仓库路径。插件不联网拉取核心，也不在安装时构建。
 
 模型走哪个接口由 **模型 ID 的最后一段**决定：以 `kimi-` 开头走 Chat Completions，其余走 Responses。这与 Kimi 自己的判断一致；名字和协议对不上时模型会在导入阶段被静默丢弃，核心会直接拒绝这种配置。
 
@@ -25,16 +25,16 @@
 
 ## 跨版本
 
-Kimi 每次发版都会重新混淆主进程代码，因此本插件不按符号名读取安装包。`status.json` 里的 `compat` 字段给出当前判断：
+插件按结构读取已安装 Kimi 的解析器，并将**当前可见模型的完整目录**交给它检查。`status.json` 中 `compat.scope` 为 `active-models`，`modelCount` 是本次检查的模型数；目录或安装包变化会使缓存失效。
 
 | `compat.state` | 含义 |
 | --- | --- |
-| `verified` | 已安装的 Kimi 接受本插件生成的每一个模型 |
-| `incompatible` | 有模型会被丢弃，需要处理 |
-| `unverified` | 这次认不出混淆结构；集成照常工作，只是无法预先验证 |
-| `unavailable` | 没找到安装包或不在支持平台 |
+| `verified` | 解析器接受本次检查的全部可见模型 |
+| `incompatible` | 有模型会被丢弃，`skipped` 列出对应项 |
+| `unverified` | 无法识别或执行解析器，兼容性未知 |
+| `unavailable` | 没找到安装包或平台不支持检查 |
 
-`unverified` 不是故障：插件只输出公开的 `api.json` 结构，从不修改 Kimi。想手动检查，可在核心仓库运行 `kimi-work-gateway compat`。
+未知状态不阻止运行，也不保证可以成功导入或调用。请核对 Kimi 的导入结果；`native_byok_ready` 表示前置条件和配置已就绪。核心 CLI 支持 `compat --config gateway.json` 检查指定配置；省略 `--config` 只检查内置样例。
 
 ## 安装
 
@@ -158,11 +158,11 @@ SETUP_AT=$(($(date +%s) * 1000))
 
 ## 验证范围
 
-- 核心接入在 macOS 上以原版 Kimi 3.2.21 / Magpie 0.1.1659 / Bun 1.4.4 复测：6 个模型全部导入，真实推理 HTTP 200。
-- Kimi 3.2.21 升级后，本插件生成的目录仍被其解析器全部接受（0 丢弃）；测试改为按结构定位解析器，并要求在**安装包全部符号随机改名**后依然通过。
-- **Windows 未做真机端到端验收。** 已实现并有测试覆盖：hosts 编辑（保留 BOM/换行/其他行、幂等、采纳手写条目、冲突拒绝）、UAC 取消映射、平台分派、`clip.exe` 剪贴板；CI 在 `windows-latest` 上跑全量测试。真实 Windows + Kimi + UAC 的完整流程需要另行验证。
-- 0.3.1 的核心副本同步到 0.1.2，`vendor/VENDOR.json` 哈希由 CI 校验；哈希在计算前统一换行，因此 Windows 上 CRLF 检出不会误报。
-- Kimi 后续版本的 BYOK 格式、隐藏入口和可用性检查可能变化；`status.json` 的 `compat` 字段会给出当前判断。
+- 历史核心接入记录：macOS、Kimi 3.2.21、Magpie 0.1.1659、Bun 1.4.4 下，6 个模型导入且真实推理 HTTP 200。该记录不替代当前源码和分发包的回归验证。
+- 当前测试检查生成的目录、两种协议转发、目录变更、兼容缓存、实际插件入口加载与断开。入口用例在隔离数据和模拟 Magpie 上游上运行；macOS 安装了 Kimi 时额外调用其真实解析器。
+- **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
+- 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。
+- Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
 
 开发验证：
 
@@ -170,12 +170,12 @@ SETUP_AT=$(($(date +%s) * 1000))
 bun test
 bun run check
 bun run vendor:verify
-bun pm pack
+bun scripts/verify-package.mjs  # 打包、解包并重跑包内测试、语法和哈希检查
 ```
 
-要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。发布包的 43 项测试在 Bun 1.4.2、1.4.4 均通过；CI 覆盖这两个版本，另在 `windows-latest` 上跑同一套测试并校验 vendor 哈希。macOS 上会额外用已安装的 Kimi 校验模型目录契约（按结构定位，符号改名不影响）；未安装或非 macOS 自动跳过。测试使用临时目录与合成凭证。
+要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。CI 配置在 Ubuntu 上覆盖 Bun 1.4.2 / 1.4.4，另在 Windows 上检查同一包和 vendor；本次修改仍需实际运行 CI 才能取得 Windows 结果。包内保留测试文件，测试使用临时目录与合成凭证。
 
-开发时可用隔离的 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 测试 Magpie 插件安装与元数据加载，并把 `MAGPIE_KIMI_DATA_HOME` 指向绝对路径，隔离 Bun 适配器的状态和 Kimi 数据查找。Agent 定义仍声明正常的用户目录，所以这种测试实例**不要打开 Agent 接入开关、同步资源库或执行首次准备**。需要完整隔离接入测试时使用独立系统用户。日常使用不要设置该变量。
+开发时可用隔离的 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 测试安装与元数据加载，并把 `MAGPIE_KIMI_DATA_HOME` 指向绝对路径。Windows 还必须将 `APPDATA` 指向隔离目录。Agent 定义仍声明正常的用户目录，因此测试实例不要在真实 Magpie 中打开接入开关、同步资源库或执行首次准备；完整界面测试使用独立系统用户。日常使用不要设置这些测试变量。
 
 ## 来源与许可证
 

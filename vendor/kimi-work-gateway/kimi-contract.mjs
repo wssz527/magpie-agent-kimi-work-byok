@@ -90,6 +90,10 @@ export function hashFile(file) {
 
 export function installedVersion(archiveFile) {
   try {
+    const version = JSON.parse(readAsarEntry(archiveFile, 'package.json')).version;
+    if (typeof version === 'string' && version.length <= 128) return version;
+  } catch {}
+  try {
     const plist = fs.readFileSync(path.join(path.dirname(path.dirname(archiveFile)), 'Info.plist'));
     return /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist.toString('utf8'))?.[1] ?? null;
   } catch { return null; }
@@ -452,16 +456,43 @@ export function inspectArchive(file, { models = probeModels() } = {}) {
   return { ...detail, state: 'verified', reason: 'models_accepted' };
 }
 
-export function inspect({ archive, platform = process.platform, models } = {}) {
-  const file = archive || ARCHIVE_BY_PLATFORM[platform] || DEFAULT_ARCHIVE;
-  if (!fs.existsSync(file)) return { state: 'unavailable', reason: 'archive_missing', archive: file };
-  return { archive: file, ...inspectArchive(file, { models }) };
+export function archiveCandidates({ platform = process.platform, env = process.env } = {}) {
+  if (platform === 'darwin') return [DEFAULT_ARCHIVE];
+  if (platform !== 'win32') return [];
+  const local = env.LOCALAPPDATA || (env.USERPROFILE ? path.win32.join(env.USERPROFILE, 'AppData', 'Local') : null);
+  const roots = [local && path.win32.join(local, 'Programs'), local,
+    env.ProgramFiles, env['ProgramFiles(x86)'], 'C:\\Program Files'].filter(Boolean);
+  return [...new Set(roots.flatMap(root => ['Kimi', 'kimi-desktop'].map(name =>
+    path.win32.join(root, name, 'resources', 'app.asar'))))];
+}
+
+function findArchive(options) {
+  const candidates = options.archive ? [options.archive] : archiveCandidates(options);
+  return candidates.find(file => fs.existsSync(file)) || candidates[0] || null;
+}
+
+export function contractFingerprint(options = {}) {
+  const file = findArchive(options);
+  try {
+    const stat = fs.statSync(file);
+    return JSON.stringify([file, stat.size, stat.mtimeMs, stat.ctimeMs]);
+  } catch { return JSON.stringify([file, 'unavailable']); }
+}
+
+export function inspect(options = {}) {
+  const file = findArchive(options);
+  const scope = options.models === undefined ? 'sample-models' : 'configured-models';
+  const models = options.models === undefined ? probeModels() : validateModels(options.models);
+  const base = { archive: file, scope, modelCount: models.length };
+  if (!file || !fs.existsSync(file)) return { ...base, state: 'unavailable', reason: file ? 'archive_missing' : 'unsupported_platform' };
+  return { ...base, ...inspectArchive(file, { models }) };
 }
 
 export function summarize(result) {
   const lines = [];
   lines.push('kimi: ' + (result.version || 'unknown')
     + (result.sha256 ? ' (app.asar ' + result.sha256.slice(0, 12) + '…)' : ''));
+  if (result.scope) lines.push('catalog: ' + result.scope + (result.modelCount === undefined ? '' : ' (' + result.modelCount + ' models)'));
   if (result.contracts) {
     lines.push('runtime contracts: ' + Object.entries(result.contracts)
       .map(([name, present]) => name + (present ? ' ok' : ' missing')).join(', '));
@@ -472,8 +503,7 @@ export function summarize(result) {
     lines.push('parser: INCOMPATIBLE — ' + result.reason
       + (result.skipped?.length ? ', skipped: ' + result.skipped.join(', ') : ''));
   } else if (result.state === 'unverified') {
-    lines.push('parser: unverified — ' + result.reason
-      + ' (the gateway still emits the documented api.json shape)');
+    lines.push('parser: unverified — ' + result.reason + ' (compatibility could not be determined)');
   } else {
     lines.push('parser: unavailable — ' + result.reason);
   }

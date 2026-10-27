@@ -2,4 +2,4 @@
 // implementation of the resolver and hosts handling. `vendor/kimi-work-gateway`
 // is the fixed copy recorded in VENDOR.json.
 export { NativeSetup, resolverScript, hostsScript, updateHosts, hostsEntry, HOSTS_MARKER,
-  DEFAULT_HOSTS } from './vendor/kimi-work-gateway/native-setup.mjs';
+  DEFAULT_HOSTS, defaultHostsPath } from './vendor/kimi-work-gateway/native-setup.mjs';

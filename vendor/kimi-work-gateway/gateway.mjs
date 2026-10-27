@@ -57,7 +57,8 @@ export function validateModels(models) {
       || row.inputModalities.some(value => !['text', 'image'].includes(value)))) throw Error('invalid_models');
     if (row.reasoningEfforts !== undefined && (!Array.isArray(row.reasoningEfforts)
       || row.reasoningEfforts.some(value => !text(value) || value.length > 64))) throw Error('invalid_models');
-    if (row.defaultEffort !== undefined && (typeof row.defaultEffort !== 'string' || row.defaultEffort.length > 64)) {
+    if (row.defaultEffort !== undefined && (typeof row.defaultEffort !== 'string' || row.defaultEffort.length > 64
+      || !row.reasoningEfforts?.includes(row.defaultEffort))) {
       throw Error('invalid_models');
     }
     const model = { id, protocol: row.protocol, contextWindow: row.contextWindow };
@@ -200,7 +201,10 @@ export class KimiWorkGateway {
       if (typeof model !== 'string') { error(400, 'invalid_model'); return; }
       const prefix = ALIASES.find(value => model.startsWith(value));
       if (prefix) model = model.slice(prefix.length);
-      if (!models.some(row => row.id === model)) { error(409, 'model_not_enabled_for_kimi'); return; }
+      const selected = models.find(row => row.id === model);
+      if (!selected) { error(409, 'model_not_enabled_for_kimi'); return; }
+      const protocol = req.url === '/v1/responses' ? 'responses' : 'chat';
+      if (selected.protocol !== protocol) { error(409, 'model_protocol_mismatch'); return; }
       payload = { ...payload, model };
       if (this.instructionsFile) {
         try { payload = applySharedInstructions(payload, this.instructionsFile, req.url); }

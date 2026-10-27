@@ -397,7 +397,7 @@ test('loading an agent never installs signal handlers in the shared plugin host'
       if (['SIGTERM','SIGINT'].some((s,i) => process.listenerCount(s) !== before[i])) throw Error('shared signal handlers changed');
       await adapter.stop();
       console.log('host preserved');
-    `], {env: {...process.env, MAGPIE_KIMI_DATA_HOME: home}, encoding: 'utf8', timeout: 10000});
+    `], {env: {...process.env, MAGPIE_KIMI_DATA_HOME: home, APPDATA: path.join(home, 'AppData', 'Roaming')}, encoding: 'utf8', timeout: 10000});
     expect(child.status).toBe(0);
     expect(child.stdout).toContain('host preserved');
   } finally { fs.rmSync(home, {recursive: true, force: true}); }

@@ -373,3 +373,43 @@ test('pending preparation keeps discovery available and serializes fresh option 
     await f.adapter.tick(); expect(calls).toHaveLength(2);
   } finally { complete?.(); await f.cleanup(); }
 });
+
+test('compatibility checks active models and invalidates cached results after catalog or archive changes', async () => {
+  const f = await controllerFixture();
+  const calls = [];
+  let fingerprint = 'archive-v1';
+  f.adapter.options.contractFingerprint = () => fingerprint;
+  f.adapter.options.inspectKimiContract = ({ models }) => {
+    calls.push(structuredClone(models));
+    return { state: 'verified', version: 'fixture', accepted: models.map(row => row.id), skipped: [] };
+  };
+  try {
+    await f.adapter.tick();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].map(row => row.id)).toEqual(ids);
+    expect(calls[0][0]).toMatchObject({ contextWindow: 131072, maxOutputTokens: 32768, reasoning: true, tools: true });
+    expect(f.adapter.status.compat).toMatchObject({ state: 'verified', scope: 'active-models', modelCount: 7, accepted: 7 });
+    await f.adapter.tick(); expect(calls).toHaveLength(1);
+    f.data.pop(); f.adapter.nativeCatalogAfter = 0;
+    await f.adapter.tick();
+    expect(calls).toHaveLength(2);
+    expect(f.adapter.status.compat.modelCount).toBe(6);
+    fingerprint = 'archive-v2';
+    await f.adapter.tick(); expect(calls).toHaveLength(3);
+    fingerprint = 'archive-v3';
+    f.adapter.options.inspectKimiContract = () => { throw Error('probe failure'); };
+    await f.adapter.tick();
+    expect(f.adapter.status.compat.state).toBe('unverified');
+    expect(f.adapter.status.gatewayReady).toBe(true);
+  } finally { await f.cleanup(); }
+});
+
+test('native requests with a mismatched model protocol never reach Magpie', async () => {
+  const f = await fixture();
+  try {
+    const response = await request(f, '/responses', { model: ids[3], input: 'hello' });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe('model_protocol_mismatch');
+    expect(f.requests).toHaveLength(0);
+  } finally { await f.cleanup(); }
+});
