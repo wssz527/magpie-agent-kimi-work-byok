@@ -250,3 +250,5 @@ bun scripts/verify-package.mjs  # 打包、解包并重跑包内测试、语法�
 基于 MIT 项目 [`@magpie-community/agent-kimi-desktop` 0.1.3](https://github.com/magpie-community/plugins/tree/main/packages/kimi-desktop)，保留上游适配器、资源库实现及版权。此仓库新增原生 BYOK 目录/转发、单域名 DNS、原生请求兼容、一次性准备及相关验证；未把上游已有功能宣称为本仓库原创。接入核心现由独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway) 提供，`vendor/` 内为固定副本。许可证见 [LICENSE](LICENSE)。
 
 本项目是独立社区插件，与 Magpie 和 Kimi 官方无隶属关系。[Magpie 插件文档](https://usemagpie.ai/docs/zh/plugins) 说明 GitHub Topic `magpie-plugin` 的发现规则；设置 Topic 不代表官方审核或推荐。
+
+插件图标 `assets/kimi.png` 取自开发者本机安装的官方 Kimi 桌面应用（3.2.21）的应用图标，仅用于标识所接入的应用；它不表示 Kimi 或 Moonshot AI 对本插件的认可、赞助或背书。

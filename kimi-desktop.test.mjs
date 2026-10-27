@@ -402,3 +402,19 @@ test('loading an agent never installs signal handlers in the shared plugin host'
     expect(child.stdout).toContain('host preserved');
   } finally { fs.rmSync(home, {recursive: true, force: true}); }
 });
+
+test('manifest and agent publish one local Kimi icon decoded from the packaged asset', () => {
+  const root = path.dirname(fileURLToPath(import.meta.url));
+  const manifest = read(path.join(root, 'package.json'));
+  const icon = manifest.magpie.icon;
+  expect(icon).toBe(agent.icon);
+  expect(icon.startsWith('data:image/png;base64,')).toBe(true);
+  expect(icon).not.toContain('://');
+  const packaged = Buffer.from(icon.slice('data:image/png;base64,'.length), 'base64');
+  const asset = fs.readFileSync(path.join(root, 'assets/kimi.png'));
+  expect(packaged.equals(asset)).toBe(true);
+  expect(manifest.files).toContain('assets/kimi.png');
+  const packed = spawnSync(process.execPath, ['pm', 'pack', '--dry-run', '--ignore-scripts'], { cwd: root, encoding: 'utf8' });
+  expect(packed.status).toBe(0);
+  expect(packed.stdout).toContain('assets/kimi.png');
+});
