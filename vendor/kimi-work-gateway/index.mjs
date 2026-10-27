@@ -4,7 +4,7 @@ export { applyInstructions, applyResponsesInstructions, applySharedInstructions,
 export { NativeByokDNS, BYOK_DOMAIN, BYOK_ADDRESS, BYOK_DNS_PORT, dnsReply, nativePrivateAddress,
   resolverConfiguration } from './native-dns.mjs';
 export { NativeSetup, resolverScript, hostsScript, updateHosts, hostsEntry, HOSTS_MARKER,
-  DEFAULT_HOSTS } from './native-setup.mjs';
+  DEFAULT_HOSTS, verdictFailure } from './native-setup.mjs';
 export { NativeSetupProbe } from './native-status.mjs';
 export { copySetupToken, defaultClipboardCopy } from './native-clipboard.mjs';
 export { defaultKimiDirectory, nativeFlagFile, defaultStateDirectory } from './paths.mjs';

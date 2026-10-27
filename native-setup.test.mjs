@@ -74,7 +74,7 @@ test('invalid native flag is rejected before administrator authorization', async
   } finally { f.cleanup(); }
 });
 
-test('resolver script installs and removes matching contents but preserves unrelated files and symlinks', () => {
+test.skipIf(process.platform === 'win32')('resolver script installs and removes matching contents but preserves unrelated files and symlinks', () => {
   const f = fixture();
   try {
     const source = path.join(f.directory, "candidate's resolver"), target = path.join(f.directory, 'resolver', 'dev.msh.team');

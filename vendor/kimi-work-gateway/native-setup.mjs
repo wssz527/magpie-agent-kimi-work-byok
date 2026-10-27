@@ -104,9 +104,14 @@ export function updateHosts(content, action) {
 // Runs the edit inside an elevated PowerShell that reads the file back after
 // writing it. The script mirrors `updateHosts` statement for statement, so the
 // two cannot disagree about what counts as ours.
-export function hostsScript(action, target = DEFAULT_HOSTS, flush = true) {
+export function hostsScript(action, target = DEFAULT_HOSTS, flush = true, resultPath = null) {
   if (!['prepare', 'remove-dns'].includes(action)) throw Error('invalid_setup_action');
   const keep = action === 'prepare';
+  // `Start-Process -Verb RunAs` returns neither the exit code nor stderr of the
+  // elevated child, so the child writes its own verdict to a file the caller
+  // reads afterwards. Without this an elevated `resolver_conflict` would be
+  // indistinguishable from a crash.
+  const report = resultPath ? JSON.stringify(resultPath) : null;
   const lines = [
     '$ErrorActionPreference = "Stop"',
     '$path = ' + JSON.stringify(target),
@@ -139,7 +144,9 @@ export function hostsScript(action, target = DEFAULT_HOSTS, flush = true) {
     '  if ($trim.Length -gt 0 -and -not $trim.StartsWith("#") -and ($trim -split "\\s+") -contains "' + BYOK_DOMAIN + '") { $foreign = $true }',
     '  [void]$kept.Add($line)',
     '}',
-    'if ($foreign) { [Console]::Error.Write("resolver_conflict"); exit 73 }',
+    'if ($foreign) { [Console]::Error.Write("resolver_conflict"); ' + (report
+      ? 'Set-Content -LiteralPath ' + report + ' -Value "resolver_conflict" -NoNewline -Encoding utf8; ' : '')
+      + 'exit 73 }',
     ...(keep
       ? ['if (-not $sawEntry) { if ($kept.Count -gt 0 -and $kept[$kept.Count-1] -eq "") { $kept.RemoveAt($kept.Count-1) }; [void]$kept.Add($marker); [void]$kept.Add($entry) }']
       : []),
@@ -148,17 +155,29 @@ export function hostsScript(action, target = DEFAULT_HOSTS, flush = true) {
     'if ($bom) { $text = [char]0xFEFF + $text }',
     'Set-Content -LiteralPath $path -Value $text -NoNewline -Encoding utf8',
     ...(flush ? ['ipconfig /flushdns | Out-Null'] : []),
+    ...(report ? ['Set-Content -LiteralPath ' + report + ' -Value "done" -NoNewline -Encoding utf8'] : []),
     'Write-Output "done"',
   ];
   return lines.filter(line => line !== '').join('\n');
 }
 
-async function windowsAdministrator(script) {
-  // A UAC prompt cannot be scripted away; the elevated child writes its output
-  // to a file this process then reads, and -Wait keeps the call blocking.
+// Interprets the elevated child's report. A missing report is not a failure:
+// the child may have been cancelled at the prompt, which the caller reports as
+// such. Only an explicit verdict is turned into an error.
+export function verdictFailure(verdict) {
+  if (!verdict || verdict === 'done') return null;
+  const failure = new Error(verdict);
+  failure.stderr = verdict;
+  return failure;
+}
+
+async function windowsAdministrator(script, reportPath = null) {
+  // A UAC prompt cannot be scripted away, so the elevated child runs a script
+  // file and -Wait keeps this call blocking. The child reports its verdict
+  // through a file instead of its exit code, because `Start-Process` returns
+  // neither the code nor the stderr of the process it started.
   const stem = path.join(os.tmpdir(), 'kimi-work-gateway-' + process.pid + '-' + Date.now());
   const file = stem + '.ps1';
-  const output = stem + '.out';
   fs.writeFileSync(file, script, { mode: 0o600 });
   try {
     await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
@@ -166,11 +185,19 @@ async function windowsAdministrator(script) {
       + ["'-NoProfile'", "'-ExecutionPolicy'", "'Bypass'", "'-File'", "'" + file.replaceAll("'", "''") + "'"]
         .join(',') + ')'],
     { timeout: 180000, maxBuffer: 65536, windowsHide: true });
-    return 'done';
   } finally {
     fs.rmSync(file, { force: true });
-    fs.rmSync(output, { force: true });
   }
+  const failure = verdictFailure(reportPath ? readReport(reportPath) : '');
+  if (failure) throw failure;
+  return 'done';
+}
+
+// The elevated child's report file. A missing file is not a failure: the child
+// may have been cancelled at the prompt, which the caller reports as such.
+function readReport(file) {
+  try { return fs.readFileSync(file, 'utf8').trim(); }
+  catch { return ''; }
 }
 
 // --- setup -----------------------------------------------------------------
@@ -227,7 +254,10 @@ export class NativeSetup {
       stage = 'dns';
       finish('running', stage);
       if (this.platform === 'win32') {
-        await this.admin(hostsScript(request.action, configuration.path));
+        // The elevated child cannot return an exit code, so it writes its
+        // verdict to `report` and this process reads it back.
+        const report = path.join(temporary, 'report');
+        await this.admin(hostsScript(request.action, configuration.path, true, report), report);
       } else {
         await this.admin(resolverScript(request.action, source, configuration.path));
       }

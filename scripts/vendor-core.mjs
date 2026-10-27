@@ -8,12 +8,20 @@ export const CORE_FILES = ['config.mjs', 'gateway.mjs', 'index.mjs', 'instructio
   'native-clipboard.mjs', 'native-dns.mjs', 'native-setup.mjs', 'native-status.mjs', 'openai-backend.mjs',
   'paths.mjs', 'LICENSE'];
 
+// Line endings are checkout policy, not content: a Windows clone that turns LF
+// into CRLF must still produce the same digest, or `vendor:verify` fails on
+// every Windows machine for reasons that have nothing to do with the code.
+function digest(file) {
+  const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
 export function vendorRecord(coreDirectory) {
   const source = path.join(coreDirectory, 'src');
   const files = {};
   for (const name of CORE_FILES) {
     const file = name === 'LICENSE' ? path.join(coreDirectory, name) : path.join(source, name);
-    files[name] = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    files[name] = digest(file);
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(coreDirectory, 'package.json'), 'utf8'));
   return { name: manifest.name, version: manifest.version, files };
@@ -37,7 +45,7 @@ export function verifyCore(target = path.join(here, 'vendor', 'kimi-work-gateway
   if (JSON.stringify(present) !== JSON.stringify([...CORE_FILES].sort())) problems.push('unexpected file set: ' + present.join(','));
   for (const [name, expected] of Object.entries(record.files)) {
     let actual;
-    try { actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(target, name))).digest('hex'); }
+    try { actual = digest(path.join(target, name)); }
     catch { problems.push('missing ' + name); continue; }
     if (actual !== expected) problems.push('changed ' + name);
   }

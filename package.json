@@ -1,11 +1,16 @@
 {
   "name": "magpie-agent-kimi-work-byok",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Magpie Agent plugin for Kimi Work's native third-party model selector on macOS and Windows, built on the shared kimi-work-gateway core.",
   "type": "module",
   "main": "./index.mjs",
-  "engines": { "bun": ">=1.4.2" },
-  "os": ["darwin", "win32"],
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "os": [
+    "darwin",
+    "win32"
+  ],
   "scripts": {
     "test": "bun test",
     "check": "node scripts/check.mjs",
@@ -13,19 +18,51 @@
     "vendor:sync": "node scripts/vendor-core.mjs sync"
   },
   "files": [
-    "index.mjs", "kimi-desktop.agent.js", "adapter.mjs", "rpc.mjs", "catalog.mjs", "library.mjs",
-    "magpie-backend.mjs", "native-byok.mjs", "native-controller.mjs", "native-dns.mjs", "native-status.mjs",
-    "native-clipboard.mjs", "native-setup.mjs",
-    "vendor/kimi-work-gateway/", "vendor/VENDOR.json", "scripts/vendor-core.mjs", "scripts/check.mjs",
-    "kimi-desktop.test.mjs", "native-byok.test.mjs", "native-contract.test.mjs", "native-clipboard.test.mjs",
-    "native-setup.test.mjs", "vendor.test.mjs",
-    "README.md", "LICENSE"
+    "index.mjs",
+    "kimi-desktop.agent.js",
+    "adapter.mjs",
+    "rpc.mjs",
+    "catalog.mjs",
+    "library.mjs",
+    "magpie-backend.mjs",
+    "native-byok.mjs",
+    "native-controller.mjs",
+    "native-dns.mjs",
+    "native-status.mjs",
+    "native-clipboard.mjs",
+    "native-setup.mjs",
+    "vendor/kimi-work-gateway/",
+    "vendor/VENDOR.json",
+    "scripts/vendor-core.mjs",
+    "scripts/check.mjs",
+    "kimi-desktop.test.mjs",
+    "native-byok.test.mjs",
+    "native-contract.test.mjs",
+    "native-clipboard.test.mjs",
+    "native-setup.test.mjs",
+    "vendor.test.mjs",
+    "README.md",
+    "LICENSE"
   ],
-  "keywords": ["magpie", "magpie-plugin", "magpie-agent", "opencode", "opencode-plugin", "kimi", "kimi-work", "byok"],
+  "keywords": [
+    "magpie",
+    "magpie-plugin",
+    "magpie-agent",
+    "opencode",
+    "opencode-plugin",
+    "kimi",
+    "kimi-work",
+    "byok"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/wssz527/magpie-agent-kimi-work-byok.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wssz527/magpie-agent-kimi-work-byok.git"
+  },
   "homepage": "https://github.com/wssz527/magpie-agent-kimi-work-byok#readme",
-  "bugs": { "url": "https://github.com/wssz527/magpie-agent-kimi-work-byok/issues" },
+  "bugs": {
+    "url": "https://github.com/wssz527/magpie-agent-kimi-work-byok/issues"
+  },
   "magpie": {
     "agent": "./kimi-desktop.agent.js",
     "icon": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2319202d'/%3E%3Cpath d='M16 17v30m0-15 17-15M16 32l17 15m10-30v30' fill='none' stroke='%2383dac5' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"

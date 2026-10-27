@@ -2,7 +2,7 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.3.0 支持 macOS 与 Windows。** 核心接入已在 macOS 上以 Kimi 3.2.21、Magpie 0.1.1659、Magpie Bun 1.4.4 实测；Windows 分支已实现并有单元测试与 CI 覆盖，但尚未在真实 Windows + Kimi + UAC 上做端到端验收。Linux 未适配。
+**v0.3.1 支持 macOS 与 Windows。** 核心接入已在 macOS 上以 Kimi 3.2.21、Magpie 0.1.1659、Magpie Bun 1.4.4 实测；Windows 分支已实现并有单元测试与 CI 覆盖，但尚未在真实 Windows + Kimi + UAC 上做端到端验收。Linux 未适配。
 
 不修改 Magpie 或 Kimi 的安装包、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里；日常只需打开 Magpie 和 Kimi。
 
@@ -161,7 +161,7 @@ SETUP_AT=$(($(date +%s) * 1000))
 - 核心接入在 macOS 上以原版 Kimi 3.2.21 / Magpie 0.1.1659 / Bun 1.4.4 复测：6 个模型全部导入，真实推理 HTTP 200。
 - Kimi 3.2.21 升级后，本插件生成的目录仍被其解析器全部接受（0 丢弃）；测试改为按结构定位解析器，并要求在**安装包全部符号随机改名**后依然通过。
 - **Windows 未做真机端到端验收。** 已实现并有测试覆盖：hosts 编辑（保留 BOM/换行/其他行、幂等、采纳手写条目、冲突拒绝）、UAC 取消映射、平台分派、`clip.exe` 剪贴板；CI 在 `windows-latest` 上跑全量测试。真实 Windows + Kimi + UAC 的完整流程需要另行验证。
-- 0.3.0 的核心副本同步到 0.1.1，`vendor/VENDOR.json` 哈希由 CI 校验。
+- 0.3.1 的核心副本同步到 0.1.2，`vendor/VENDOR.json` 哈希由 CI 校验；哈希在计算前统一换行，因此 Windows 上 CRLF 检出不会误报。
 - Kimi 后续版本的 BYOK 格式、隐藏入口和可用性检查可能变化；`status.json` 的 `compat` 字段会给出当前判断。
 
 开发验证：
