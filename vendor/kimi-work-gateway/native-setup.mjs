@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolverConfiguration, BYOK_DOMAIN } from './native-dns.mjs';
+import { resolverConfiguration, BYOK_DOMAIN, BYOK_ADDRESS } from './native-dns.mjs';
 
 const execute = promisify(execFile);
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
@@ -14,6 +14,14 @@ const atomic = (file, value) => {
   fs.renameSync(temporary, file);
 };
 
+export const HOSTS_MARKER = '# kimi-work-gateway native BYOK';
+export const DEFAULT_HOSTS = 'C:\\Windows\\System32\\drivers\\etc\\hosts';
+
+// --- macOS -----------------------------------------------------------------
+
+// Kept byte for byte as it has always been: an installed resolver is compared
+// against this text before it is replaced or removed, so changing even a space
+// would strand every earlier installation behind a conflict.
 export function resolverScript(action, source, target = '/etc/resolver/' + BYOK_DOMAIN, flush = true) {
   if (!['prepare', 'remove-dns'].includes(action)) throw Error('invalid_setup_action');
   const destination = quote(target), input = quote(source), directory = quote(path.dirname(target));
@@ -32,10 +40,149 @@ async function administrator(command) {
     { timeout: 180000, maxBuffer: 16384 });
 }
 
+// --- Windows ---------------------------------------------------------------
+
+export function hostsEntry() {
+  return BYOK_ADDRESS + ' ' + BYOK_DOMAIN;
+}
+
+// Windows has no per-domain resolver files, and it does not need one: Kimi
+// resolves the name through `dns.promises.lookup`, which reads this hosts file
+// on win32, and it only checks that the answer is a private address. So the
+// whole integration is two lines here — no UDP listener, no service.
+//
+// Only the lines this tool owns are touched. Everything else is preserved byte
+// for byte (including a BOM and the original line endings), because the hosts
+// file usually belongs to other software too.
+export function updateHosts(content, action) {
+  if (!['prepare', 'remove-dns'].includes(action)) throw Error('invalid_setup_action');
+  const bom = content.startsWith('\uFEFF');
+  const body = bom ? content.slice(1) : content;
+  const eol = body.includes('\r\n') ? '\r\n' : '\n';
+  const entry = hostsEntry();
+  const lines = body.length ? body.split(/\r?\n/) : [];
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+
+  const kept = [];
+  let sawEntry = false, sawMarker = false, foreign = false;
+  for (let at = 0; at < lines.length; at++) {
+    const trimmed = lines[at].trim();
+    if (trimmed === HOSTS_MARKER) {
+      sawMarker = true;
+      // Our own pair is kept for `prepare` (so repeating it is a no-op) and
+      // dropped for `remove-dns`, together with the entry that follows it.
+      if (action === 'prepare') kept.push(lines[at]);
+      if (lines[at + 1]?.trim() === entry) { sawEntry = true; if (action === 'prepare') kept.push(lines[at + 1]); at++; }
+      continue;
+    }
+    if (trimmed === entry) {
+      sawEntry = true;
+      // A hand-written entry is adopted as-is by `prepare`, and is still the
+      // entry this tool manages when it is removed.
+      if (action === 'prepare') kept.push(lines[at]);
+      continue;
+    }
+    // Another program already claims this name: refuse instead of shadowing it.
+    if (trimmed && !trimmed.startsWith('#') && trimmed.split(/\s+/).includes(BYOK_DOMAIN)) foreign = true;
+    kept.push(lines[at]);
+  }
+
+  if (foreign) throw Error('resolver_conflict');
+  // Only `prepare` writes, and only when no entry exists yet.
+  if (action === 'prepare' && !sawEntry) {
+    if (kept.length && kept[kept.length - 1] === '') kept.pop();
+    kept.push(HOSTS_MARKER, entry);
+  }
+
+  const text = kept.join(eol);
+  return {
+    content: (bom ? '\uFEFF' : '') + (text.length ? text + eol : ''),
+    changed: action === 'prepare' ? !sawEntry : sawEntry || sawMarker,
+  };
+}
+
+// Runs the edit inside an elevated PowerShell that reads the file back after
+// writing it. The script mirrors `updateHosts` statement for statement, so the
+// two cannot disagree about what counts as ours.
+export function hostsScript(action, target = DEFAULT_HOSTS, flush = true) {
+  if (!['prepare', 'remove-dns'].includes(action)) throw Error('invalid_setup_action');
+  const keep = action === 'prepare';
+  const lines = [
+    '$ErrorActionPreference = "Stop"',
+    '$path = ' + JSON.stringify(target),
+    '$marker = ' + JSON.stringify(HOSTS_MARKER),
+    '$entry = ' + JSON.stringify(hostsEntry()),
+    '$raw = [System.IO.File]::ReadAllText($path)',
+    '$bom = $raw.StartsWith([char]0xFEFF)',
+    'if ($bom) { $raw = $raw.Substring(1) }',
+    '$crlf = [string][char]13 + [char]10',
+    '$eol = if ($raw.Contains($crlf)) { $crlf } else { [string][char]10 }',
+    // Splitting on a literal CRLF-or-LF regex; PowerShell does not expand
+    // backslash escapes inside a double-quoted string, so the pattern is built
+    // from character codes instead of "\\r?\\n".
+    '$split = [regex]::Escape($crlf) + "|" + [string][char]10',
+    '$lines = if ($raw.Length -gt 0) { [regex]::Split($raw, $split) } else { @() }',
+    'if ($lines.Count -gt 0 -and $lines[$lines.Count-1] -eq "") { $lines = @($lines[0..($lines.Count-2)]) }',
+    '$kept = New-Object System.Collections.ArrayList',
+    '$sawEntry = $false; $foreign = $false',
+    'for ($i = 0; $i -lt $lines.Count; $i++) {',
+    '  $line = $lines[$i]; $trim = $line.Trim()',
+    '  if ($trim -eq $marker) {',
+    '    if ($i + 1 -lt $lines.Count -and $lines[$i+1].Trim() -eq $entry) {',
+    '      $sawEntry = $true',
+    ...(keep ? ['      [void]$kept.Add($line); [void]$kept.Add($lines[$i+1])'] : []),
+    '      $i++',
+    '    }',
+    ...(keep ? ['    else { [void]$kept.Add($line) }'] : []),
+    '    continue }',
+    '  if ($trim -eq $entry) { $sawEntry = $true; ' + (keep ? '[void]$kept.Add($line)' : '') + '; continue }',
+    '  if ($trim.Length -gt 0 -and -not $trim.StartsWith("#") -and ($trim -split "\\s+") -contains "' + BYOK_DOMAIN + '") { $foreign = $true }',
+    '  [void]$kept.Add($line)',
+    '}',
+    'if ($foreign) { [Console]::Error.Write("resolver_conflict"); exit 73 }',
+    ...(keep
+      ? ['if (-not $sawEntry) { if ($kept.Count -gt 0 -and $kept[$kept.Count-1] -eq "") { $kept.RemoveAt($kept.Count-1) }; [void]$kept.Add($marker); [void]$kept.Add($entry) }']
+      : []),
+    '$text = ($kept -join $eol)',
+    'if ($text.Length -gt 0) { $text = $text + $eol }',
+    'if ($bom) { $text = [char]0xFEFF + $text }',
+    'Set-Content -LiteralPath $path -Value $text -NoNewline -Encoding utf8',
+    ...(flush ? ['ipconfig /flushdns | Out-Null'] : []),
+    'Write-Output "done"',
+  ];
+  return lines.filter(line => line !== '').join('\n');
+}
+
+async function windowsAdministrator(script) {
+  // A UAC prompt cannot be scripted away; the elevated child writes its output
+  // to a file this process then reads, and -Wait keeps the call blocking.
+  const stem = path.join(os.tmpdir(), 'kimi-work-gateway-' + process.pid + '-' + Date.now());
+  const file = stem + '.ps1';
+  const output = stem + '.out';
+  fs.writeFileSync(file, script, { mode: 0o600 });
+  try {
+    await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Start-Process -FilePath powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList @('
+      + ["'-NoProfile'", "'-ExecutionPolicy'", "'Bypass'", "'-File'", "'" + file.replaceAll("'", "''") + "'"]
+        .join(',') + ')'],
+    { timeout: 180000, maxBuffer: 65536, windowsHide: true });
+    return 'done';
+  } finally {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(output, { force: true });
+  }
+}
+
+// --- setup -----------------------------------------------------------------
+
 export class NativeSetup {
-  constructor({ stateDir, flagFile, platform = process.platform, admin = administrator,
-    resolverPath = '/etc/resolver/' + BYOK_DOMAIN } = {}) {
-    Object.assign(this, { stateDir, flagFile, platform, admin, resolverPath });
+  constructor({ stateDir, flagFile, platform = process.platform, admin = null,
+    resolverPath = null, hostsPath = DEFAULT_HOSTS } = {}) {
+    Object.assign(this, {
+      stateDir, flagFile, platform, hostsPath,
+      resolverPath: resolverPath || '/etc/resolver/' + BYOK_DOMAIN,
+      admin: admin || (platform === 'win32' ? windowsAdministrator : administrator),
+    });
   }
 
   flagValue() {
@@ -57,7 +204,7 @@ export class NativeSetup {
     if (typeof request.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(request.id)
       || !['prepare', 'remove-dns'].includes(request.action) || !Number.isFinite(request.at)
       || Math.abs(Date.now() - request.at) > 300000) return finish('invalid-request');
-    if (this.platform !== 'darwin') return finish('unsupported-platform');
+    if (!['darwin', 'win32'].includes(this.platform)) return finish('unsupported-platform');
     const receiptFile = path.join(this.stateDir, 'native-setup-receipt.json');
     try {
       const previous = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
@@ -66,7 +213,9 @@ export class NativeSetup {
     let temporary;
     let stage = 'validate';
     try {
-      const configuration = resolverConfiguration(port, this.resolverPath);
+      const configuration = this.platform === 'darwin'
+        ? resolverConfiguration(port, this.resolverPath)
+        : { path: this.hostsPath, content: '' };
       if (request.action === 'prepare') {
         if (!fs.statSync(path.dirname(path.dirname(this.flagFile))).isDirectory()) throw Error('kimi_data_missing');
         this.flagValue();
@@ -77,7 +226,11 @@ export class NativeSetup {
       fs.writeFileSync(source, configuration.content, { mode: 0o600 });
       stage = 'dns';
       finish('running', stage);
-      await this.admin(resolverScript(request.action, source, configuration.path));
+      if (this.platform === 'win32') {
+        await this.admin(hostsScript(request.action, configuration.path));
+      } else {
+        await this.admin(resolverScript(request.action, source, configuration.path));
+      }
       if (request.action === 'prepare') {
         stage = 'reveal';
         const value = this.flagValue();
@@ -87,7 +240,8 @@ export class NativeSetup {
     } catch (failure) {
       const text = String(failure.stderr || failure.message || '');
       finish(text.includes('resolver_conflict') ? 'resolver-conflict'
-        : /User cancel|user cancel|\(-128\)/.test(text) ? 'cancelled' : 'failed', stage);
+        : /User cancel|user cancel|\(-128\)|operation was canceled|cancelled by the user/i.test(text) ? 'cancelled'
+          : 'failed', stage);
     } finally {
       if (temporary) fs.rmSync(temporary, { recursive: true, force: true });
     }

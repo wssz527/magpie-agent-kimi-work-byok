@@ -1,14 +1,14 @@
 {
   "name": "magpie-agent-kimi-work-byok",
-  "version": "0.2.0",
-  "description": "Magpie Agent plugin for Kimi Work's native third-party model selector on macOS, built on the shared kimi-work-gateway core.",
+  "version": "0.3.0",
+  "description": "Magpie Agent plugin for Kimi Work's native third-party model selector on macOS and Windows, built on the shared kimi-work-gateway core.",
   "type": "module",
   "main": "./index.mjs",
   "engines": { "bun": ">=1.4.2" },
-  "os": ["darwin"],
+  "os": ["darwin", "win32"],
   "scripts": {
     "test": "bun test",
-    "check": "for file in *.mjs *.js scripts/*.mjs vendor/kimi-work-gateway/*.mjs; do node --check \"$file\" || exit; done",
+    "check": "node scripts/check.mjs",
     "vendor:verify": "node scripts/vendor-core.mjs verify",
     "vendor:sync": "node scripts/vendor-core.mjs sync"
   },
@@ -16,7 +16,7 @@
     "index.mjs", "kimi-desktop.agent.js", "adapter.mjs", "rpc.mjs", "catalog.mjs", "library.mjs",
     "magpie-backend.mjs", "native-byok.mjs", "native-controller.mjs", "native-dns.mjs", "native-status.mjs",
     "native-clipboard.mjs", "native-setup.mjs",
-    "vendor/kimi-work-gateway/", "vendor/VENDOR.json", "scripts/vendor-core.mjs",
+    "vendor/kimi-work-gateway/", "vendor/VENDOR.json", "scripts/vendor-core.mjs", "scripts/check.mjs",
     "kimi-desktop.test.mjs", "native-byok.test.mjs", "native-contract.test.mjs", "native-clipboard.test.mjs",
     "native-setup.test.mjs", "vendor.test.mjs",
     "README.md", "LICENSE"

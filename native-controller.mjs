@@ -4,8 +4,9 @@ import { KimiAdapter } from './adapter.mjs';
 import { NativeByokGateway } from './native-byok.mjs';
 import { NativeSetupProbe } from './native-status.mjs';
 import { copySetupToken } from './native-clipboard.mjs';
-import { NativeSetup } from './native-setup.mjs';
+import { NativeSetup, DEFAULT_HOSTS, hostsEntry } from './native-setup.mjs';
 import { NativeByokDNS, BYOK_DNS_PORT, resolverConfiguration } from './native-dns.mjs';
+import { inspect as inspectKimiContract } from './vendor/kimi-work-gateway/kimi-contract.mjs';
 
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 const activeCount = value => Array.isArray(value) ? value.length : Number(value) || 0;
@@ -77,10 +78,19 @@ export class LocalKimiAdapter extends KimiAdapter {
       const url = await this.nativeGateway.configure({ url: desired.gateway?.url, key: desired.gateway?.key, port: settings.port ?? 3426 });
       let resolver;
       if (settings.dns?.enabled === true) {
-        if (process.platform !== 'darwin') throw Error('native_byok_dns_platform_unsupported');
-        const port = settings.dns.port ?? BYOK_DNS_PORT;
-        resolver = resolverConfiguration(port);
-        await this.nativeDNS.start(port);
+        if (process.platform === 'win32') {
+          // Windows has no per-domain resolver files and needs none: Kimi
+          // resolves the name through the hosts file, which `prepare` wrote.
+          // There is deliberately no UDP listener here.
+          resolver = { path: DEFAULT_HOSTS, content: hostsEntry() };
+          await this.nativeDNS.stop();
+        } else if (process.platform === 'darwin') {
+          const port = settings.dns.port ?? BYOK_DNS_PORT;
+          resolver = resolverConfiguration(port);
+          await this.nativeDNS.start(port);
+        } else {
+          throw Error('native_byok_dns_platform_unsupported');
+        }
       } else {
         await this.nativeDNS.stop();
       }
@@ -98,12 +108,21 @@ export class LocalKimiAdapter extends KimiAdapter {
         : !setup.revealed ? 'native_byok_waiting_setup'
           : !imported ? 'native_byok_waiting_import'
             : runner?.lifecycleStatus !== 'running' ? 'waiting_kimi' : 'native_byok_ready';
+      // Cached for a minute: the probe parses the installed bundle, which is
+      // too expensive to repeat on every tick.
+      if (!this.compat || Date.now() - this.compat.at > 60000) {
+        try { this.compat = { at: Date.now(), value: inspectKimiContract() }; }
+        catch { this.compat = { at: Date.now(), value: { state: 'unverified', reason: 'probe_failed' } }; }
+      }
       this.report(code, {
         mode: 'native-byok', gatewayReady: true, url, models: this.nativeGateway.models.length,
         setup: { ...setup, imported }, dnsListening: Boolean(this.nativeDNS.socket),
+        compat: { state: this.compat.value.state, version: this.compat.value.version ?? null,
+          ...(this.compat.value.reason ? { reason: this.compat.value.reason } : {}) },
         preparation: this.nativeSetup?.result,
         lastCatalogRequest: this.nativeGateway.lastCatalogRequest,
-        clipboard: copySetupToken({ request: this.options.copyTokenRequest, stateDir: this.stateDir, key: this.nativeGateway.connection.key }),
+        clipboard: copySetupToken({ request: this.options.copyTokenRequest, stateDir: this.stateDir,
+          key: this.nativeGateway.connection.key, platform: process.platform }),
         ...(resolver ? { resolver } : {}),
       });
     } catch (failure) {

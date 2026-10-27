@@ -2,7 +2,7 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.2.0 支持 macOS。** 核心接入已在 Kimi 3.2.20、Magpie 0.1.1587、Magpie Bun 1.4.4 上验证。Windows / Linux 的原生模式尚未适配，不承诺跨平台可用。
+**v0.3.0 支持 macOS 与 Windows。** 核心接入已在 macOS 上以 Kimi 3.2.21、Magpie 0.1.1659、Magpie Bun 1.4.4 实测；Windows 分支已实现并有单元测试与 CI 覆盖，但尚未在真实 Windows + Kimi + UAC 上做端到端验收。Linux 未适配。
 
 不修改 Magpie 或 Kimi 的安装包、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里；日常只需打开 Magpie 和 Kimi。
 
@@ -21,7 +21,20 @@
 
 模型走哪个接口由 **模型 ID 的最后一段**决定：以 `kimi-` 开头走 Chat Completions，其余走 Responses。这与 Kimi 自己的判断一致；名字和协议对不上时模型会在导入阶段被静默丢弃，核心会直接拒绝这种配置。
 
-> 首次接入涉及本机配置：Kimi 的隐藏 BYOK 入口、Kimi 原生网关设置，以及 `/etc/resolver/dev.msh.team` 单域名解析。它不是普通“开发者模式”，也不是零配置接入。准备操作必须显式触发，并由 macOS 管理员授权；不会修改全局 DNS、hosts、代理、证书或防火墙。
+> 首次接入涉及本机配置：Kimi 的隐藏 BYOK 入口、Kimi 原生网关设置，以及 `dev.msh.team` 的单域名解析。它不是普通“开发者模式”，也不是零配置接入。准备操作必须显式触发，并由系统管理员授权（macOS 写 `/etc/resolver`，Windows 只改 hosts 的两行）；不会修改全局 DNS、代理、证书或防火墙。
+
+## 跨版本
+
+Kimi 每次发版都会重新混淆主进程代码，因此本插件不按符号名读取安装包。`status.json` 里的 `compat` 字段给出当前判断：
+
+| `compat.state` | 含义 |
+| --- | --- |
+| `verified` | 已安装的 Kimi 接受本插件生成的每一个模型 |
+| `incompatible` | 有模型会被丢弃，需要处理 |
+| `unverified` | 这次认不出混淆结构；集成照常工作，只是无法预先验证 |
+| `unavailable` | 没找到安装包或不在支持平台 |
+
+`unverified` 不是故障：插件只输出公开的 `api.json` 结构，从不修改 Kimi。想手动检查，可在核心仓库运行 `kimi-work-gateway compat`。
 
 ## 安装
 
@@ -39,17 +52,25 @@ github:wssz527/magpie-agent-kimi-work-byok
 magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
 ```
 
-没有把 `magpie` 加入 PATH 时，macOS 安装位置可使用：
+没有把 `magpie` 加入 PATH 时，按平台使用安装位置：
 
 ```sh
+# macOS
 /Applications/magpie.app/Contents/MacOS/magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
+```
+
+```powershell
+# Windows
+& "$env:LOCALAPPDATA\Programs\magpie\magpie.exe" plugin add github:wssz527/magpie-agent-kimi-work-byok
 ```
 
 打开并登录普通 Kimi 桌面应用，在 Magpie「Agent」中打开 **Kimi Work BYOK** 的接入开关。模型由 Kimi Work 自己选择，因此本版不在 Magpie Agent 卡片提供默认模型选择器。模型的可见范围仍由 Magpie 控制。
 
 ## 首次准备
 
-先让 Kimi Work 当前任务结束。下面的命令向插件提交一个五分钟内有效的一次性请求；由 Magpie 宿主运行准备步骤，并把该 Agent 的网关 Token 复制到系统剪贴板。请在 macOS 自己的管理员授权框中完成认证，不要把密码或 Token 发给别人。
+先让 Kimi Work 当前任务结束。下面的命令向插件提交一个五分钟内有效的一次性请求；由 Magpie 宿主运行准备步骤，并把该 Agent 的网关 Token 复制到系统剪贴板。请在自己的系统管理员授权框中完成认证，不要把密码或 Token 发给别人。
+
+macOS：
 
 ```sh
 MAGPIE=/Applications/magpie.app/Contents/MacOS/magpie
@@ -58,14 +79,22 @@ SETUP_AT=$(($(date +%s) * 1000))
   "{\"setupRequest\":{\"action\":\"prepare\",\"id\":\"prepare-$SETUP_AT\",\"at\":$SETUP_AT},\"copyTokenRequest\":{\"id\":\"copy-token-$SETUP_AT\",\"at\":$SETUP_AT}}"
 ```
 
-命令显示“options set”只表示请求已保存。准备结果在 `~/.config/magpie-kimi/native-setup-receipt.json`：`result.state` 应为 `done`。管理员取消、文件冲突或中断都会明确记录，且不会循环弹框；重试时重新运行上面的命令生成新请求 ID。
+Windows（PowerShell）：
+
+```powershell
+$MAGPIE = "$env:LOCALAPPDATA\Programs\magpie\magpie.exe"
+$SETUP_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+& $MAGPIE plugin options magpie-agent-kimi-work-byok "{`"setupRequest`":{`"action`":`"prepare`",`"id`":`"prepare-$SETUP_AT`",`"at`":$SETUP_AT},`"copyTokenRequest`":{`"id`":`"copy-token-$SETUP_AT`",`"at`":$SETUP_AT}}"
+```
+
+命令显示“options set”只表示请求已保存。准备结果在 `~/.config/magpie-kimi/native-setup-receipt.json`（Windows 为 `%USERPROFILE%\.config\magpie-kimi\native-setup-receipt.json`）：`result.state` 应为 `done`。管理员取消、文件冲突或中断都会明确记录，且不会循环弹框；重试时重新运行上面的命令生成新请求 ID。
 
 准备会做两件事：
 
-1. 为 `dev.msh.team` 安装精确单域名 resolver，指向插件的 `127.0.0.1:53535`。插件只回答这个域名，A 记录为合成内网地址 `10.255.255.254`，其他域名不转发。这让 Kimi 的本地可用性检查通过，不代表接入了真实公司内网。
+1. 让 `dev.msh.team` 解析到插件的私有地址 `10.255.255.254`。macOS 安装单域名 resolver 指向 `127.0.0.1:53535`；Windows 只在 hosts 写入两行，不需要 DNS 服务。两者都只影响这一个域名，不接管其他解析，也不代表接入了真实公司内网。
 2. 在 Kimi 用户数据目录的 `kimi-agent/byok-availability.json` 合并 `revealed: true`，保留已有字段。这个标记只显示 Kimi 原有的 BYOK 设置，不修改应用代码。
 
-已有 resolver 的内容不同或路径是符号链接时，插件拒绝覆盖。需要自定义端口时先配置 `nativeByok.dns.port`，再准备；不要手动覆盖其他网络软件的解析文件。
+已有 resolver 的内容不同、路径是符号链接，或 hosts 中该域名已被别的程序占用时，插件拒绝覆盖并保留现状。需要自定义端口时先配置 `nativeByok.dns.port`，再准备；不要手动覆盖其他网络软件的解析文件。
 
 ## 在 Kimi 原生设置导入
 
@@ -78,15 +107,15 @@ SETUP_AT=$(($(date +%s) * 1000))
 
 点击 **测试连接并导入模型**，看到导入成功后回到 Work，点击输入框旁的模型名称即可切换。不要以 Magpie Agent 卡片的“已接入”代替 Kimi 的导入成功提示。
 
-完成后清除一次性操作选项：
+完成后清除一次性操作选项（Windows 用 `& $MAGPIE plugin options ... off`）：
 
 ```sh
 /Applications/magpie.app/Contents/MacOS/magpie plugin options magpie-agent-kimi-work-byok off
 ```
 
-需要重新复制 Token 时，可以重新执行首次准备命令；匹配的 resolver 可重复准备，不会覆盖其他文件。也可只提交新的 `copyTokenRequest`。
+需要重新复制 Token 时，可以重新执行首次准备命令；已经匹配的解析设置不会被覆盖。也可只提交新的 `copyTokenRequest`。
 
-Kimi 菜单保存的是导入时的模型清单。在 Magpie 增删可见模型后，再点一次“测试连接并导入模型”刷新。每次实际推理前，插件都会重新校验当前可见目录；已撤销模型明确报错，不退回默认模型。
+Kimi 菜单保存的是导入时的模型清单。**Kimi 自己每 24 小时重新拉取一次**目录，所以在 Magpie 增删可见模型后，最长一天内会自动更新；想立刻生效，再点一次“测试连接并导入模型”。每次实际推理前，插件都会重新校验当前可见目录；已撤销模型明确报错，不退回默认模型。
 
 ## 状态与排查
 
@@ -94,7 +123,7 @@ Kimi 菜单保存的是导入时的模型清单。在 Magpie 增删可见模型�
 
 | 状态 | 含义与操作 |
 | --- | --- |
-| `native_byok_waiting_intranet` | 系统 DNS 检查未通过；核对准备结果和单域名 resolver，再重启 Kimi |
+| `native_byok_waiting_intranet` | 系统 DNS 检查未通过；核对准备结果和单域名解析设置（macOS resolver / Windows hosts），再重启 Kimi |
 | `native_byok_waiting_setup` | 隐藏入口未显示；完成准备，也可在 Kimi 设置页连续点击版本号五次 |
 | `native_byok_waiting_import` | 本地网关已启动，尚未从 Kimi 原生设置导入 |
 | `native_byok_ready` | 前置条件和导入配置就绪；实际模型调用还取决于 Magpie 上游账号与额度 |
@@ -109,7 +138,7 @@ HTTP 默认监听 `127.0.0.1:3426`；`nativeByok.port` 可改变端口，修改�
 ## 断开与撤销 DNS
 
 1. 先在 **Kimi 自带的第三方模型网关设置中断开连接**，让 Kimi 自己清理原生 profile。插件不会替其他账号删除 profile。
-2. 保持 Magpie 和本插件接入开启，提交下列撤销请求，并在 macOS 授权框完成认证。
+2. 保持 Magpie 和本插件接入开启，提交下列撤销请求，并在系统授权框完成认证（Windows 会弹出 UAC）。
 3. 回执为 `done` 后，关闭 Magpie 的 Kimi Work BYOK 接入开关；需要时从插件页移除本包。
 
 ```sh
@@ -119,7 +148,7 @@ SETUP_AT=$(($(date +%s) * 1000))
   "{\"setupRequest\":{\"action\":\"remove-dns\",\"id\":\"remove-dns-$SETUP_AT\",\"at\":$SETUP_AT}}"
 ```
 
-只删除内容仍与本插件配置匹配的 `/etc/resolver/dev.msh.team`，不删除别人的解析文件。隐藏入口标记保留；它本身不会产生网络请求。停止 Magpie 后，插件内 HTTP 和 DNS 监听也停止，不会安装 LaunchAgent 或其他常驻服务。
+只删除内容仍与本插件配置匹配的 `/etc/resolver/dev.msh.team`（macOS），或 hosts 中带本插件标记的那两行（Windows），不删除别人的解析文件或条目。隐藏入口标记保留；它本身不会产生网络请求。停止 Magpie 后，插件内 HTTP 监听（以及 macOS 的 DNS 监听）也停止，不会安装 LaunchAgent、计划任务或其他常驻服务。
 
 ## 资源库与本地数据
 
@@ -129,13 +158,11 @@ SETUP_AT=$(($(date +%s) * 1000))
 
 ## 验证范围
 
-- 核心接入在原版 Kimi 3.2.20 / Magpie 0.1.1587 / Bun 1.4.4 的 macOS 环境验证。
-- Work 原生设置成功导入多类模型，正常重启后菜单仍保留。GLM-5.3 Flash 从 Work 界面发送测试并收到完整回复，Magpie 记录确认请求模型与实际供应商，HTTP 200。
-- DeepSeek 经同一插件网关完成真实流式调用，HTTP 200；这项是 HTTP 客户端验证，不等同于第二次 Work 界面发送。
-- Kimi `app.asar`、`Info.plist` 哈希与接入前一致，`codesign --verify --deep --strict` 通过。
-- 分享版一次性准备模块通过隔离目录与模拟管理员调用验证；既有单域名 DNS 实际配置验证来自本机接入。CI 不会弹出管理员窗口或连接真实模型。
-- 0.2.0 把接入逻辑换成本仓库 `vendor/kimi-work-gateway/` 内的固定核心副本。升级前所在机器的真实接入状态、Kimi 菜单与 resolver 未改动；兼容包装器与原接口一致，原有 15 项原生行为测试全部保留并通过。
-- Kimi 后续版本的 BYOK 格式、隐藏入口和可用性检查可能变化；本版只声明上述已验证版本。
+- 核心接入在 macOS 上以原版 Kimi 3.2.21 / Magpie 0.1.1659 / Bun 1.4.4 复测：6 个模型全部导入，真实推理 HTTP 200。
+- Kimi 3.2.21 升级后，本插件生成的目录仍被其解析器全部接受（0 丢弃）；测试改为按结构定位解析器，并要求在**安装包全部符号随机改名**后依然通过。
+- **Windows 未做真机端到端验收。** 已实现并有测试覆盖：hosts 编辑（保留 BOM/换行/其他行、幂等、采纳手写条目、冲突拒绝）、UAC 取消映射、平台分派、`clip.exe` 剪贴板；CI 在 `windows-latest` 上跑全量测试。真实 Windows + Kimi + UAC 的完整流程需要另行验证。
+- 0.3.0 的核心副本同步到 0.1.1，`vendor/VENDOR.json` 哈希由 CI 校验。
+- Kimi 后续版本的 BYOK 格式、隐藏入口和可用性检查可能变化；`status.json` 的 `compat` 字段会给出当前判断。
 
 开发验证：
 
@@ -146,7 +173,7 @@ bun run vendor:verify
 bun pm pack
 ```
 
-要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。发布包的 41 项测试、315 个断言在 Bun 1.4.2、1.4.4 均通过，CI 覆盖两个版本并校验 vendor 哈希。安装了对应 Kimi 的 macOS 会额外验证其纯模型目录解析契约；其他环境自动跳过该项。测试使用临时目录与合成凭证。
+要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。发布包的 43 项测试在 Bun 1.4.2、1.4.4 均通过；CI 覆盖这两个版本，另在 `windows-latest` 上跑同一套测试并校验 vendor 哈希。macOS 上会额外用已安装的 Kimi 校验模型目录契约（按结构定位，符号改名不影响）；未安装或非 macOS 自动跳过。测试使用临时目录与合成凭证。
 
 开发时可用隔离的 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 测试 Magpie 插件安装与元数据加载，并把 `MAGPIE_KIMI_DATA_HOME` 指向绝对路径，隔离 Bun 适配器的状态和 Kimi 数据查找。Agent 定义仍声明正常的用户目录，所以这种测试实例**不要打开 Agent 接入开关、同步资源库或执行首次准备**。需要完整隔离接入测试时使用独立系统用户。日常使用不要设置该变量。
 

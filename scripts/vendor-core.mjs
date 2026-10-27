@@ -4,8 +4,9 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-export const CORE_FILES = ['config.mjs', 'gateway.mjs', 'index.mjs', 'instructions.mjs', 'native-clipboard.mjs',
-  'native-dns.mjs', 'native-setup.mjs', 'native-status.mjs', 'openai-backend.mjs', 'paths.mjs', 'LICENSE'];
+export const CORE_FILES = ['config.mjs', 'gateway.mjs', 'index.mjs', 'instructions.mjs', 'kimi-contract.mjs',
+  'native-clipboard.mjs', 'native-dns.mjs', 'native-setup.mjs', 'native-status.mjs', 'openai-backend.mjs',
+  'paths.mjs', 'LICENSE'];
 
 export function vendorRecord(coreDirectory) {
   const source = path.join(coreDirectory, 'src');
