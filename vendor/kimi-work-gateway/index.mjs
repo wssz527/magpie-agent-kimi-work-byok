@@ -7,6 +7,8 @@ export { NativeSetup, resolverScript, hostsScript, updateHosts, hostsEntry, HOST
   DEFAULT_HOSTS, defaultHostsPath, verdictFailure } from './native-setup.mjs';
 export { NativeSetupProbe } from './native-status.mjs';
 export { copySetupToken, defaultClipboardCopy } from './native-clipboard.mjs';
+export { SubagentPolicy, normalizeSubagentPolicy } from './subagent-policy.mjs';
+export { SubagentRuntime, findSubagentInstallation } from './subagent-runtime.mjs';
 export { defaultKimiDirectory, nativeFlagFile, defaultStateDirectory } from './paths.mjs';
 export { inspect as inspectKimiContract, inspectArchive as inspectKimiArchive, locateContract,
   summarize as summarizeKimiContract, probeModels, readAsarEntry, hashFile,

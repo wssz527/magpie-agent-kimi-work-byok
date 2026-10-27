@@ -387,13 +387,13 @@ test('loading an agent never installs signal handlers in the shared plugin host'
       await plugin({});
       const adapter = globalThis[Symbol.for('magpie.kimi-desktop.adapter.v1')];
       const request = { id: 'synthetic-new-options', at: Date.now() };
-      await plugin({}, { setupRequest: request });
-      if (adapter.options.setupRequest !== request) throw Error('new options ignored');
+      await plugin({}, { setupRequest: request, subagentRequest: request });
+      if (adapter.options.setupRequest !== request || adapter.options.subagentRequest !== request) throw Error('new options ignored');
       await plugin({});
-      if (adapter.options.setupRequest) throw Error('cleared options retained');
+      if (adapter.options.setupRequest || adapter.options.subagentRequest) throw Error('cleared options retained');
       if (!adapter.stateDir.startsWith(process.env.MAGPIE_KIMI_DATA_HOME)) throw Error('plugin isolation failed');
       const { agent } = await import(${JSON.stringify(pathToFileURL(fileURLToPath(new URL('./kimi-desktop.agent.js', import.meta.url))).href)});
-      if (agent.dir !== '~/.config/magpie-kimi' || agent.model) throw Error('native agent metadata mismatch');
+      if (agent.dir !== '~/.config/magpie-kimi' || agent.model !== 'subagents.model') throw Error('native agent metadata mismatch');
       if (['SIGTERM','SIGINT'].some((s,i) => process.listenerCount(s) !== before[i])) throw Error('shared signal handlers changed');
       await adapter.stop();
       console.log('host preserved');

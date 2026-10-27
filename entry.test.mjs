@@ -43,8 +43,22 @@ test('the shipped plugin entry connects, forwards both protocols, refreshes mode
         adapter=globalThis[Symbol.for('magpie.kimi-desktop.adapter.v1')];
         clearInterval(adapter.timer);
         adapter.nativeProbe.lookupFn=async()=>({address:'10.0.0.2'});
-        desired.enabled=true; write(connection,desired);
+        const {connect,agent}=await import(${JSON.stringify(new URL('./kimi-desktop.agent.js', import.meta.url).href)});
+        const changes=connect({gateway:{v1:desired.gateway.url,key},model:{id:data[0].id}});
+        for (const [key,value] of Object.entries(changes)) {
+          if (key==='nativeByok.dns.enabled') continue;
+          const keys=key.split('.'); let target=desired;
+          for (const part of keys.slice(0,-1)) target=target[part]??={};
+          target[keys.at(-1)]=value;
+        }
+        check(agent.model==='subagents.model','selector metadata mismatch');
+        desired.subagents.model=data[0].id;
+        write(connection,desired);
         await adapter.tick();
+        const policyFile=path.join(stateDir,'subagent-policy.json');
+        check(readPolicy().modelAlias==='byok-kth-kimi/'+data[0].id,'selected child policy mismatch');
+        check(adapter.status.subagents.runtime.state==='not-prepared','unloaded runtime reported active');
+        function readPolicy(){return JSON.parse(fs.readFileSync(policyFile,'utf8'));}
         const url=adapter.nativeGateway.url;
         const headers={Authorization:'Bearer '+key};
         const catalog=await (await fetch(url+'/models/api.json',{headers})).json();
@@ -62,8 +76,11 @@ test('the shipped plugin entry connects, forwards both protocols, refreshes mode
         await adapter.tick(); check(adapter.status.code==='native_byok_ready','import readiness mismatch');
         data.shift(); adapter.nativeCatalogAfter=0; await adapter.tick();
         check(adapter.status.compat.scope==='active-models' && adapter.status.compat.modelCount===1,'compat catalog stale');
+        check(adapter.status.gatewayReady && adapter.status.subagents.policy.mode==='blocked','child revocation disabled main gateway');
+        check(readPolicy().mode==='blocked','revoked child was retained');
         desired.enabled=false; write(connection,desired); await adapter.tick();
         check(adapter.status.code==='disconnected' && !adapter.nativeGateway.server,'disconnect failed');
+        check(readPolicy().mode==='inherit','disconnect retained child override');
         check(JSON.parse(fs.readFileSync(configFile)).retained==='fixture','Kimi data changed');
         console.log('entry flow verified');
       } finally {

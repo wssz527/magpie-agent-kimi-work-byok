@@ -1,10 +1,10 @@
 {
   "name": "kimi-work-gateway",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "files": {
-    "config.mjs": "ec355a85b4d9279258e794a1625153c1f50a74399966bb859e303668b7dc2a90",
+    "config.mjs": "235de3cb6cb25f7f09cc7455d857ab04a8cb3ee5d08e25c54f02ae8b34bae115",
     "gateway.mjs": "4cd76b396c53d89558b920b6f74e7fcce4462e15e34f032532edddf45ddac4af",
-    "index.mjs": "603d29b185020415f67cde454447bf1b0059df586091598ea6b8fa5d4674079d",
+    "index.mjs": "af1e93a855c3bb6002efdbf8dd2f1ee2c7280850c1bce7a7d05f6d83e38c3b70",
     "instructions.mjs": "71b9f45b82ed49f5133b75d70185a82e33dd1d901bf2046a214750825b84eaf2",
     "kimi-contract.mjs": "f90f4ddf24e39fe34f534defc40e93f14e632951d318f681e606bc42d72b17c2",
     "native-clipboard.mjs": "c2f91fcb2f5b131a379033ab92867e4300bf2dbdc08c3ea811ef5f07cd45fef4",
@@ -13,6 +13,9 @@
     "native-status.mjs": "72456c35b07da935d3cf8abdad7e4d5fd312d7d3de9bd0bd509f7bfaa2ff32ec",
     "openai-backend.mjs": "0f18652d6af6a2ad4d8612631933076938b1247654d5684194714bb347f5cfef",
     "paths.mjs": "2bca4cc95c09c733c2bb97cba23e6ace8167c06ce6a5a447a50477452c530f23",
+    "subagent-policy.mjs": "5a13df32c462e5561cb060acbb16c1393c28a0b2c52019805df763faf3d62dbc",
+    "subagent-hook.mjs": "c2f056a8b443c74e765c0a5f592643050df1a8fbfb5a56a4f9a06e1307573867",
+    "subagent-runtime.mjs": "cef3e760cdef253e43a861fe5ccc9a8a79fb5272d76e859ff5d138fd888eccdc",
     "LICENSE": "0264acda9d55101e4809de24520539a371ff904cf84fc164bca909b8bced5754"
   }
 }

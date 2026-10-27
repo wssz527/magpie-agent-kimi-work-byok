@@ -10,13 +10,15 @@ export default async function KimiDesktop(input, options = {}) {
       } catch { /* No configuration, credentials or raw RPC errors in logs. */ }
     };
     const adapter = await new KimiAdapter({ home: process.env.MAGPIE_KIMI_DATA_HOME || undefined,
-      log, copyTokenRequest: options.copyTokenRequest, setupRequest: options.setupRequest }).start();
+      log, copyTokenRequest: options.copyTokenRequest, setupRequest: options.setupRequest,
+      subagentRequest: options.subagentRequest }).start();
     globalThis[instance] = adapter;
     // The shared host owns shutdown. Its normal exit path is synchronous;
     // never install signal handlers or terminate a host shared with plugins.
     process.once('exit', () => adapter.restoreFileOnExit());
   }
   globalThis[instance].options = { ...globalThis[instance].options,
-    setupRequest: options.setupRequest, copyTokenRequest: options.copyTokenRequest };
+    setupRequest: options.setupRequest, copyTokenRequest: options.copyTokenRequest,
+    subagentRequest: options.subagentRequest };
   return {};
 }

@@ -1,3 +1,5 @@
+import { normalizeSubagentPolicy } from './subagent-policy.mjs';
+
 export function readConfig(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('invalid_config');
   const upstream = value.upstream;
@@ -18,5 +20,6 @@ export function readConfig(value) {
   return {
     upstream: { baseURL: upstream.baseURL, apiKeyEnv: upstream.apiKeyEnv },
     models: value.models, tokenEnv, port, dns: { enabled: dnsEnabled, port: dnsPort },
+    ...(value.subagents === undefined ? {} : { subagents: normalizeSubagentPolicy(value.subagents, value.models) }),
   };
 }

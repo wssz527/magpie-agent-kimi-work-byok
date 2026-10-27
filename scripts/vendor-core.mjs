@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const CORE_FILES = ['config.mjs', 'gateway.mjs', 'index.mjs', 'instructions.mjs', 'kimi-contract.mjs',
   'native-clipboard.mjs', 'native-dns.mjs', 'native-setup.mjs', 'native-status.mjs', 'openai-backend.mjs',
-  'paths.mjs', 'LICENSE'];
+  'paths.mjs', 'subagent-policy.mjs', 'subagent-hook.mjs', 'subagent-runtime.mjs', 'LICENSE'];
 
 // Line endings are checkout policy, not content: a Windows clone that turns LF
 // into CRLF must still produce the same digest, or `vendor:verify` fails on

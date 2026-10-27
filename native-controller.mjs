@@ -3,6 +3,7 @@ import path from 'node:path';
 import { KimiAdapter } from './adapter.mjs';
 import { NativeByokGateway } from './native-byok.mjs';
 import { NativeSetupProbe } from './native-status.mjs';
+import { NativeSubagents } from './native-subagents.mjs';
 import { copySetupToken } from './native-clipboard.mjs';
 import { NativeSetup, defaultHostsPath, hostsEntry } from './native-setup.mjs';
 import { NativeByokDNS, BYOK_DNS_PORT, resolverConfiguration } from './native-dns.mjs';
@@ -18,6 +19,7 @@ export class LocalKimiAdapter extends KimiAdapter {
     this.options = options;
     this.nativeGateway = new NativeByokGateway({ fetchImpl: this.fetchImpl, instructionsFile: this.instructionsFile });
     this.nativeDNS = new NativeByokDNS();
+    this.subagents = new NativeSubagents({ stateDir: this.stateDir, kimiDir: this.kimiDir, runtime: options.subagentRuntime });
     this.nativeProbe = new NativeSetupProbe({
       flagFile: options.flagFile || path.join(path.dirname(path.dirname(this.kimiDir)), 'kimi-agent', 'byok-availability.json'),
       ...(options.lookupFn ? { lookupFn: options.lookupFn } : {}),
@@ -32,6 +34,9 @@ export class LocalKimiAdapter extends KimiAdapter {
     await this.nativeGateway.stop();
     await this.nativeDNS.stop();
     this.nativeCatalogAfter = 0;
+    this.subagentClose = { policy: { mode: 'inherit' } };
+    try { this.subagents.close(); }
+    catch { this.subagentClose = { policy: { mode: 'blocked', reason: 'subagent_policy_close_failed' } }; }
   }
 
   async tick() {
@@ -62,7 +67,7 @@ export class LocalKimiAdapter extends KimiAdapter {
         if (busy(runner) || this.nativeGateway.inflight.size) { this.report('waiting_kimi_idle'); return; }
         await this.closeNative();
         await this.restore();
-        this.report('disconnected');
+        this.report('disconnected', { subagents: this.subagentClose });
         return;
       }
       if (this.state?.active) {
@@ -119,6 +124,7 @@ export class LocalKimiAdapter extends KimiAdapter {
       this.report(code, {
         mode: 'native-byok', gatewayReady: true, url, models: models.length,
         setup: { ...setup, imported }, dnsListening: Boolean(this.nativeDNS.socket),
+        subagents: await this.subagents.update(desired.subagents, models, this.options.subagentRequest),
         compat: { state: this.compat.value.state, version: this.compat.value.version ?? null,
           scope: 'active-models', modelCount: models.length,
           ...(this.compat.value.accepted ? { accepted: this.compat.value.accepted.length } : {}),
@@ -151,6 +157,7 @@ export class LocalKimiAdapter extends KimiAdapter {
 
   restoreFileOnExit() {
     this.nativeGateway.connection = null;
+    try { this.subagents.close(); } catch { this.log('subagent_policy_close_failed'); }
     super.restoreFileOnExit();
   }
 }

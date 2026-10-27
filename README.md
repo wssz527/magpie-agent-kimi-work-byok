@@ -2,9 +2,11 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.3.1 支持 macOS 与 Windows。** 核心接入已在 macOS 上以 Kimi 3.2.21、Magpie 0.1.1659、Magpie Bun 1.4.4 实测；Windows 分支已实现并有单元测试与 CI 覆盖，但尚未在真实 Windows + Kimi + UAC 上做端到端验收。Linux 未适配。
+**v0.4.0 新增可选原生子代理模型控制。** BYOK 核心接入已在 macOS 上以 Kimi 3.2.21、Magpie 0.1.1659、Magpie Bun 1.4.4 实测；Windows 分支已有测试与 CI 覆盖，原生子代理适配仅接受下文列出的已知内核。Windows + Kimi + UAC 与桌面启动仍待真机验收，Linux 未适配。
 
-不修改 Magpie 或 Kimi 的安装包、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里；日常只需打开 Magpie 和 Kimi。
+原生 BYOK 接入不修改 Magpie 或 Kimi 的安装目录、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里。
+
+新增的**可选原生子代理模型控制**会从本机 Kimi 生成一份运行时副本，在副本中适配策略读取，并通过 `DAIMON_BUNDLE_DIR` 启动 Kimi。这是内部运行时适配，当前仅接受已校验内核的 Kimi 3.2.21；未知版本拒绝准备，安装目录保持原样。主模型仍由 Work 菜单选择。独立网关目前没有 Web 管理面板；本插件复用 Magpie 原生 Agent 选择器。
 
 ## 与通用核心的关系
 
@@ -64,7 +66,9 @@ magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
 & "$env:LOCALAPPDATA\Programs\magpie\magpie.exe" plugin add github:wssz527/magpie-agent-kimi-work-byok
 ```
 
-打开并登录普通 Kimi 桌面应用，在 Magpie「Agent」中打开 **Kimi Work BYOK** 的接入开关。模型由 Kimi Work 自己选择，因此本版不在 Magpie Agent 卡片提供默认模型选择器。模型的可见范围仍由 Magpie 控制。
+打开并登录普通 Kimi 桌面应用，在 Magpie「Agent」中打开 **Kimi Work BYOK** 的接入开关。**卡片上的模型选择器指定原生子代理的强制模型，主模型继续在 Kimi Work 菜单中选择**。模型可见范围、账号凭证、路由与用量仍由 Magpie 管理。
+
+已有 native-byok 配置如果没有 `subagents` 字段，继续使用 Kimi 原来的子代理绑定方式；旧版顶层 `model` 字段不会自动迁移成子代理目标。选择子代理模型后，还要完成下文的运行时准备与启动，保存选择本身不表示已生效。
 
 ## 首次准备
 
@@ -117,6 +121,66 @@ $SETUP_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
 Kimi 菜单保存的是导入时的模型清单。**Kimi 自己每 24 小时重新拉取一次**目录，所以在 Magpie 增删可见模型后，最长一天内会自动更新；想立刻生效，再点一次“测试连接并导入模型”。每次实际推理前，插件都会重新校验当前可见目录；已撤销模型明确报错，不退回默认模型。
 
+## 强制原生子代理模型
+
+先完成上面的 BYOK 导入，再在 Magpie 的 **Kimi Work BYOK** 卡片选择子代理目标。它使用 Magpie 已有模型目录和 Agent 凭证，不复制 Magpie 的账号或新增推理服务。目标必须可见且支持工具调用；协议、上下文、输出限制和默认推理档位沿用该模型的真实能力。
+
+首次使用需要显式准备本地运行时副本。macOS：
+
+```sh
+MAGPIE=/Applications/magpie.app/Contents/MacOS/magpie
+REQUEST_AT=$(($(date +%s) * 1000))
+"$MAGPIE" plugin options magpie-agent-kimi-work-byok \
+  "{\"subagentRequest\":{\"action\":\"prepare\",\"id\":\"subagents-prepare-$REQUEST_AT\",\"at\":$REQUEST_AT}}"
+```
+
+Windows（命令已提供，真机验收待进行）：
+
+```powershell
+$MAGPIE = "$env:LOCALAPPDATA\Programs\magpie\magpie.exe"
+$REQUEST_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+& $MAGPIE plugin options magpie-agent-kimi-work-byok "{`"subagentRequest`":{`"action`":`"prepare`",`"id`":`"subagents-prepare-$REQUEST_AT`",`"at`":$REQUEST_AT}}"
+```
+
+在 `status.json` 中确认 `subagents.operation.state` 为 `prepared`。准备只复制本机运行时到 `~/.config/magpie-kimi/native-runtime/`，不启动或结束 Kimi，不需要修改安装目录。副本不随插件分发。
+
+让 Work 任务结束，**正常退出 Kimi**，再提交新启动请求。macOS：
+
+```sh
+REQUEST_AT=$(($(date +%s) * 1000))
+"$MAGPIE" plugin options magpie-agent-kimi-work-byok \
+  "{\"subagentRequest\":{\"action\":\"launch\",\"id\":\"subagents-launch-$REQUEST_AT\",\"at\":$REQUEST_AT}}"
+```
+
+Windows：
+
+```powershell
+$REQUEST_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+& $MAGPIE plugin options magpie-agent-kimi-work-byok "{`"subagentRequest`":{`"action`":`"launch`",`"id`":`"subagents-launch-$REQUEST_AT`",`"at`":$REQUEST_AT}}"
+```
+
+启动仅为本次 Kimi 进程设置 `DAIMON_BUNDLE_DIR`。如果 Kimi 仍运行，返回 `waiting-kimi-exit`，不会强杀，也不会退出后自动重试；退出后重新提交新 ID 的请求。`starting` 只表示启动请求已发出。每个请求五分钟内有效，跨插件重载也只执行一次；可以用 `magpie plugin options magpie-agent-kimi-work-byok off` 清除操作选项。
+
+检查 `status.json` 的 `subagents`，不要用顶层 `native_byok_ready` 判断子代理接管：
+
+| 字段 / 状态 | 含义 |
+| --- | --- |
+| `policy.mode: force` | 已保存目标，`policy.model` 是 Magpie 模型 ID |
+| `policy.mode: inherit` | 使用 Kimi 原有子代理绑定 |
+| `policy.mode: blocked` | 目标撤销、能力不符或策略文件有问题；错误原因在 `reason`，不沿用旧强制目标 |
+| `runtime.state: not-prepared` | 尚未生成副本 |
+| `runtime.state: waiting-launch` | 尚未观察到匹配副本的有效回执；从适配入口启动并在 Work 中加载会话 |
+| `runtime.state: pending-policy` | 已观察到副本运行，新策略等待下一次原生子代理配置读取 |
+| `runtime.state: loaded` | 匹配运行时的进程、心跳和当前策略版本均已确认；`runtime.mode` 为观察到的策略，强制模式下 `runtime.modelAlias` 为目标 |
+| `runtime.state: policy-unavailable` | 副本仍运行，但策略丢失或无法读取；主会话保持可用，子代理被阻止 |
+| `runtime.state: heartbeat-stale` | 匹配进程仍在，心跳尚未更新；先观察运行状态，不代表需要重新启动 |
+| `runtime.state: unavailable` | 找不到原安装或运行时来源，`reason` 给出原因 |
+| `runtime.state: outdated` / `conflict` | 来源已变化或副本/状态文件冲突；先检查原因，再重新准备，拒绝静默复用 |
+
+切换目标后，对后续新建的普通原生子代理生效；已经运行的子代理不会被换模型。`fork` 必须继承父模型，强制模式下会明确拒绝，改用普通新建子代理。恢复旧子代理时，保存的模型与强制目标不一致也会拒绝，避免改写旧上下文；一致时允许恢复。关闭接入或插件正常退出会按文件归属恢复 `inherit`，旧宿主不会覆盖新宿主的策略。下次从 Kimi 普通入口启动即可不使用副本。
+
+当前允许的来源为 Kimi **3.2.21**，内核规范化 SHA-256 为 `ea0a2ec58a26bd0365401e14251b33b7a547dd31bfd423f61699ac362026d1af`。相同版本但内核不同也会拒绝；新 Kimi 版本须重新核对接入口和实跑后加入支持范围。它不是 Kimi 或 Magpie 的官方稳定子代理 API。
+
 ## 状态与排查
 
 状态文件：`~/.config/magpie-kimi/status.json`。它不保存 Token 或对话内容。
@@ -159,7 +223,9 @@ SETUP_AT=$(($(date +%s) * 1000))
 ## 验证范围
 
 - 历史核心接入记录：macOS、Kimi 3.2.21、Magpie 0.1.1659、Bun 1.4.4 下，6 个模型导入且真实推理 HTTP 200。该记录不替代当前源码和分发包的回归验证。
-- 当前测试检查生成的目录、两种协议转发、目录变更、兼容缓存、实际插件入口加载与断开。入口用例在隔离数据和模拟 Magpie 上游上运行；macOS 安装了 Kimi 时额外调用其真实解析器。
+- 当前测试检查生成的目录、两种协议转发、目录变更、兼容缓存、实际插件入口加载、子代理选择保存、目标撤销、一次性操作去重及断开恢复。入口用例在隔离数据和模拟 Magpie 上游上运行；macOS 安装了 Kimi 时额外调用其真实解析器。
+- 核心的原生验收用 Node 24 加载本地生成副本中的真实 Work adapter 与内核，经网关访问本地模拟上游，验证父 A → 子 B → 父 A、跨协议、推理档位、配置重建、关闭以及 fork/resume 冲突。未调用付费模型。没有安装受支持 Kimi 或 Node 24 的环境会跳过此项；普通 CI 不代替真实内核验收。
+- 本轮未替换正在使用的插件或重启用户桌面；真实桌面从适配入口启动后的整条操作链仍需单独验收。
 - **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
 - 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。
 - Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
