@@ -9,6 +9,7 @@ export { NativeSetupProbe } from './native-status.mjs';
 export { copySetupToken, defaultClipboardCopy } from './native-clipboard.mjs';
 export { SubagentPolicy, normalizeSubagentPolicy } from './subagent-policy.mjs';
 export { SubagentRuntime, findSubagentInstallation } from './subagent-runtime.mjs';
+export { probeSubagentKernel, SUBAGENT_ADAPTER_VERSION } from './subagent-structure.mjs';
 export { normalizeTranslationConfig, TRANSLATION_DEFAULTS, TRANSLATION_LANGUAGES } from './translation-config.mjs';
 export { defaultKimiDirectory, nativeFlagFile, defaultStateDirectory } from './paths.mjs';
 export { inspect as inspectKimiContract, inspectArchive as inspectKimiArchive, locateContract,

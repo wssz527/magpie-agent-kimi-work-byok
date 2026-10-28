@@ -1,11 +1,11 @@
 {
   "name": "kimi-work-gateway",
-  "version": "0.5.0",
-  "commit": "1cad55fc911a66127259691108a2eaf2161d3fc5",
+  "version": "0.6.0",
+  "commit": "be9e0024740d513a5e8ee1556435472e55828a52",
   "files": {
     "config.mjs": "e72f29eef9dbdc0f0e5688e8cba02a86967a78bafc496db752e7d3a355722aea",
     "gateway.mjs": "f44bd28df4870dd64dd4ccced3dabf66e7b3c590fa6ce0f640414c7e886ce363",
-    "index.mjs": "f18c119a775669c37e5ccd8323ccacda59757d32f2e74b9fad05f7016e067a95",
+    "index.mjs": "c88d4c639e75034eaf87f2bfd5248e840c859b37b98d13076a698eb4d5748718",
     "instructions.mjs": "71b9f45b82ed49f5133b75d70185a82e33dd1d901bf2046a214750825b84eaf2",
     "kimi-contract.mjs": "64373a905cff757ccbb29041037d8bdace28277bc8eac9753b116f8a34c791ad",
     "native-clipboard.mjs": "c2f91fcb2f5b131a379033ab92867e4300bf2dbdc08c3ea811ef5f07cd45fef4",
@@ -16,14 +16,15 @@
     "paths.mjs": "2bca4cc95c09c733c2bb97cba23e6ace8167c06ce6a5a447a50477452c530f23",
     "subagent-policy.mjs": "5a13df32c462e5561cb060acbb16c1393c28a0b2c52019805df763faf3d62dbc",
     "subagent-hook.mjs": "c2f056a8b443c74e765c0a5f592643050df1a8fbfb5a56a4f9a06e1307573867",
-    "subagent-runtime.mjs": "ca415757d714c78d093707318caa4e5e286c92c509d27d5d1f36da2e19ead5e5",
+    "subagent-runtime.mjs": "5ed7568eb33b4c939ffbd858dee75c050888f2d4ef567c0f56ef200e5095afb2",
+    "subagent-structure.mjs": "dfa3dfe4e192d7bc229e8591a28c0c450c03303bc0214c82cc9a8dfbf31a5381",
     "translation-config.mjs": "5c974786e792ad10ec9b09f52eab7334ba4d73268624e89fdd893a8838b4e2c3",
     "LICENSE": "0264acda9d55101e4809de24520539a371ff904cf84fc164bca909b8bced5754"
   },
   "projection": {
     "index.mjs": {
       "source": "src/index.mjs",
-      "sourceSha256": "daf6ab84a5f2a5a8d316ba1f9e153012008db15687dbd1936e49316418bbb4ad",
+      "sourceSha256": "59bbec68c942c19260050682799027ab397dc558e6651eb2484d953b4a7969cd",
       "mode": "allowlist-reexports",
       "dropped": [
         "translation-runtime.mjs",

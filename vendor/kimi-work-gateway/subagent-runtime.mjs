@@ -6,35 +6,22 @@ import { fileURLToPath } from 'node:url';
 import { archiveCandidates, installedVersion } from './kimi-contract.mjs';
 import { SUBAGENT_POLICY_FILE, readSubagentJSON, writeSubagentJSON } from './subagent-policy.mjs';
 import { SUBAGENT_HOOK_VERSION } from './subagent-hook.mjs';
+import { applySubagentStructure, probeSubagentKernel, SUBAGENT_ADAPTER_VERSION } from './subagent-structure.mjs';
 
 const KERNEL = 'app/daimon/dist/kimi-code-v2/kernel-bundle.mjs';
 const HOOK = 'kwg-subagent-hook.mjs';
-const SUPPORTED = new Set([
-  '3.2.21:ea0a2ec58a26bd0365401e14251b33b7a547dd31bfd423f61699ac362026d1af',
-  '3.2.21:3e20b395026c2257d600ac9fda97e27d3ef07fc1f24361a85d890f6efc23778f',
-]);
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const sourceText = file => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 const hookFile = fileURLToPath(new URL('./subagent-hook.mjs', import.meta.url));
 
-function replaceOnce(source, anchor, replacement) {
-  if (source.split(anchor).length !== 2) throw Error('subagent_runtime_incompatible');
-  return source.replace(anchor, replacement);
+function runtimeIdentity(value, policyPath, hookHash) {
+  const values = [value.sourceHash, policyPath, SUBAGENT_HOOK_VERSION, hookHash];
+  if (value.adapterVersion !== undefined) values.push(value.adapterVersion, value.version, value.archiveHash ?? null);
+  return hash(JSON.stringify(values)).slice(0, 24);
 }
 
 export function transformSubagentKernel(source, options) {
-  if (source.includes('kwgSubagentHook')) throw Error('subagent_runtime_already_adapted');
-  let result = replaceOnce(source,
-    '\tget(domain) {\n\t\tif (Object.prototype.hasOwnProperty.call(this.memory, domain))',
-    '\tget(domain) {\n\t\tif (domain === "secondaryModel") {\n\t\t\tconst policy = kwgSubagentHook.configuration(this.bootstrap.homeDir);\n\t\t\tif (policy !== undefined) return policy;\n\t\t}\n\t\tif (Object.prototype.hasOwnProperty.call(this.memory, domain))');
-  result = replaceOnce(result,
-    '\tasync planSpawn(input) {\n\t\tconst caller = this.requireCaller(input.callerAgentId);',
-    '\tasync planSpawn(input) {\n\t\tkwgSubagentHook.assertSpawn(this.configService, input);\n\t\tconst caller = this.requireCaller(input.callerAgentId);');
-  result = replaceOnce(result,
-    '\t\tif (handle === void 0) throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agent.agentId}" does not exist`, { details: { agentId: agent.agentId } });\n\t\treturn runAgentTurn(handle, request, {',
-    '\t\tif (handle === void 0) throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agent.agentId}" does not exist`, { details: { agentId: agent.agentId } });\n\t\tkwgSubagentHook.assertModel(this.configService, handle.accessor.get(IAgentProfileService).data().modelAlias);\n\t\treturn runAgentTurn(handle, request, {');
-  return result + '\nimport { createSubagentRuntimeHook as kwgCreateSubagentHook } from "./' + HOOK + '";\n'
-    + 'const kwgSubagentHook = kwgCreateSubagentHook(' + JSON.stringify(options) + ');\n';
+  return applySubagentStructure(source, options, HOOK);
 }
 
 export function findSubagentInstallation({ archive, bundleDir, application, platform = process.platform, env = process.env } = {}) {
@@ -116,9 +103,12 @@ export class SubagentRuntime {
       assertTree(sourceDirectory);
       const source = sourceText(path.join(sourceDirectory, KERNEL));
       const sourceHash = hash(source);
-      if (!SUPPORTED.has(installation.version + ':' + sourceHash)) throw Error('subagent_runtime_incompatible');
+      const probe = probeSubagentKernel(source);
+      const compatibility = { strategy: probe.strategy, checks: probe.checks };
+      const sourceIdentity = { sourceHash, version: installation.version, adapterVersion: SUBAGENT_ADAPTER_VERSION,
+        ...(installation.tarball ? { archiveHash: hash(fs.readFileSync(installation.tarball)) } : {}) };
       const hook = sourceText(hookFile);
-      const runtimeId = hash(JSON.stringify([sourceHash, this.policyPath, SUBAGENT_HOOK_VERSION, hash(hook)])).slice(0, 24);
+      const runtimeId = runtimeIdentity(sourceIdentity, this.policyPath, hash(hook));
       const destination = path.join(runtimeRoot, runtimeId);
       const bundleDir = path.join(destination, 'bundle');
       const generated = transformSubagentKernel(source, { policyPath: this.policyPath, receiptPath: this.receiptPath, runtimeId, sourceHash });
@@ -146,12 +136,11 @@ export class SubagentRuntime {
         fs.renameSync(copied, path.join(committed, 'bundle'));
         fs.renameSync(committed, destination);
       }
-      const manifest = { schemaVersion: 1, runtimeId, hookVersion: SUBAGENT_HOOK_VERSION, ...installation,
-        ...(installation.tarball ? { archiveHash: hash(fs.readFileSync(installation.tarball)) } : {}),
-        bundleDir, sourceHash, patchedHash: hash(generated), hookHash: hash(hook),
-        policyPath: this.policyPath, receiptPath: this.receiptPath };
+      const manifest = { schemaVersion: 1, ...sourceIdentity, compatibility, runtimeId,
+        hookVersion: SUBAGENT_HOOK_VERSION, ...installation, bundleDir,
+        patchedHash: hash(generated), hookHash: hash(hook), policyPath: this.policyPath, receiptPath: this.receiptPath };
       writeSubagentJSON(this.manifestFile, manifest);
-      return { state: 'prepared', version: manifest.version, runtimeId, bundleDir };
+      return { state: 'prepared', version: manifest.version, runtimeId, bundleDir, compatibility };
     } finally { fs.rmSync(staging, { recursive: true, force: true }); }
   }
 
@@ -164,7 +153,8 @@ export class SubagentRuntime {
         || manifest.bundleDir !== path.join(this.stateDir, 'native-runtime', manifest.runtimeId, 'bundle')
         || manifest.policyPath !== this.policyPath || manifest.receiptPath !== this.receiptPath
         || manifest.hookVersion !== SUBAGENT_HOOK_VERSION
-        || !SUPPORTED.has(manifest.version + ':' + manifest.sourceHash)) throw Error();
+        || ![manifest.sourceHash, manifest.patchedHash, manifest.hookHash].every(value => /^[a-f0-9]{64}$/.test(value))) throw Error();
+      if (manifest.adapterVersion !== undefined && manifest.adapterVersion !== SUBAGENT_ADAPTER_VERSION) return { state: 'outdated' };
       for (const directory of [this.stateDir, path.join(this.stateDir, 'native-runtime'), path.dirname(manifest.bundleDir), manifest.bundleDir]) {
         if (fs.lstatSync(directory).isSymbolicLink()) throw Error();
       }
@@ -183,13 +173,14 @@ export class SubagentRuntime {
         || hash(fs.readFileSync(installation.tarball)) !== manifest.archiveHash)) return { state: 'outdated' };
       assertTree(manifest.bundleDir);
       const hookHash = hash(sourceText(hookFile));
-      if (manifest.hookHash !== hookHash || manifest.runtimeId !== hash(JSON.stringify([
-        manifest.sourceHash, this.policyPath, SUBAGENT_HOOK_VERSION, hookHash])).slice(0, 24)) return { state: 'outdated' };
+      if (manifest.hookHash !== hookHash || manifest.runtimeId !== runtimeIdentity(manifest, this.policyPath, hookHash)) return { state: 'outdated' };
       if (hash(sourceText(path.join(manifest.bundleDir, KERNEL))) !== manifest.patchedHash
         || hash(sourceText(path.join(path.dirname(path.join(manifest.bundleDir, KERNEL)), HOOK))) !== hookHash) throw Error();
       let receipt, policy;
       try { receipt = readSubagentJSON(this.receiptPath); policy = readSubagentJSON(this.policyPath); } catch {}
-      const result = { version: manifest.version, runtimeId: manifest.runtimeId };
+      const result = { version: manifest.version, runtimeId: manifest.runtimeId,
+        compatibility: { strategy: manifest.adapterVersion === undefined ? 'existing' : 'structural',
+          adapterVersion: manifest.adapterVersion ?? 1 } };
       const observed = receipt?.schemaVersion === 1 && receipt?.runtimeId === manifest.runtimeId
         && receipt?.sourceHash === manifest.sourceHash && alive(receipt?.pid)
         && (runnerPid === undefined || receipt.pid === runnerPid);
@@ -206,7 +197,11 @@ export class SubagentRuntime {
   }
 
   launchContext() {
-    const status = this.inspect();
+    let status = this.inspect();
+    if (['not-prepared', 'outdated'].includes(status.state)) {
+      this.prepare();
+      status = this.inspect();
+    }
     if (!['loaded', 'pending-policy', 'waiting-launch'].includes(status.state)) throw Error('subagent_runtime_not_ready');
     const manifest = readSubagentJSON(this.manifestFile);
     if (!manifest.application || !fs.existsSync(manifest.application)) throw Error('subagent_kimi_unavailable');
