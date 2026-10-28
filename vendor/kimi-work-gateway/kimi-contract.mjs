@@ -29,8 +29,7 @@ export const ARCHIVE_BY_PLATFORM = {
   win32: 'C:\\Program Files\\Kimi\\resources\\app.asar',
 };
 
-// Plain-text markers that survived every release so far. They describe the
-// parts of Kimi this gateway depends on, not its internals.
+// Source-text observations only: obfuscated builds can hide these strings.
 const RUNTIME_MARKERS = {
   'byok-availability.json': 'native_byok_flag',
   'byok-providers.json': 'native_profile_store',
@@ -494,8 +493,11 @@ export function summarize(result) {
     + (result.sha256 ? ' (app.asar ' + result.sha256.slice(0, 12) + '…)' : ''));
   if (result.scope) lines.push('catalog: ' + result.scope + (result.modelCount === undefined ? '' : ' (' + result.modelCount + ' models)'));
   if (result.contracts) {
-    lines.push('runtime contracts: ' + Object.entries(result.contracts)
-      .map(([name, present]) => name + (present ? ' ok' : ' missing')).join(', '));
+    lines.push('runtime source markers: ' + Object.entries(result.contracts)
+      .map(([name, present]) => name + (present ? ' observed' : ' not-observed')).join(', '));
+    if (Object.values(result.contracts).some(present => !present)) {
+      lines.push('unobserved source markers may be hidden by obfuscation; they do not prove a runtime feature is absent');
+    }
   }
   if (result.state === 'verified') {
     lines.push('parser: verified — ' + result.accepted.length + ' models accepted, 0 skipped');

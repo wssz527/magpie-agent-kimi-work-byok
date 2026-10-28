@@ -108,13 +108,33 @@ export function openAIModels(models) {
 
 export class KimiWorkGateway {
   constructor({ backend, instructionsFile, timeoutMs = 300000, catalogTimeoutMs = 6000,
-    fetchImpl = globalThis.fetch, forwardHeaders = DEFAULT_FORWARD_HEADERS } = {}) {
+    fetchImpl = globalThis.fetch, forwardHeaders = DEFAULT_FORWARD_HEADERS, recordRequests = false } = {}) {
     if (!backend || typeof backend.listModels !== 'function' || typeof backend.request !== 'function') {
       throw Error('invalid_backend');
     }
-    Object.assign(this, { backend, instructionsFile, timeoutMs, catalogTimeoutMs, fetchImpl, forwardHeaders });
+    Object.assign(this, { backend, instructionsFile, timeoutMs, catalogTimeoutMs, fetchImpl, forwardHeaders, recordRequests });
     this.inflight = new Set();
     this.models = [];
+    this.metrics = { startedAt: Date.now(), requests: 0, failures: 0, recent: [] };
+  }
+
+  async observe(req, res) {
+    const record = this.recordRequests && req.method === 'POST' && ['/v1/chat/completions', '/v1/responses'].includes(req.url)
+      && authorized(req.headers.authorization, this.connection?.key) && !req.headers.origin
+      && (!req.headers['sec-fetch-site'] || req.headers['sec-fetch-site'] === 'none')
+      ? { at: Date.now(), model: '', protocol: req.url === '/v1/responses' ? 'responses' : 'chat' } : null;
+    if (record) req.gatewayRecord = record;
+    try { await this.forward(req, res); }
+    finally {
+      if (record) {
+        record.status ??= res.writableEnded ? res.statusCode : 499;
+        record.ms = Math.max(0, Date.now() - record.at);
+        this.metrics.requests++;
+        if (record.status >= 400) this.metrics.failures++;
+        this.metrics.recent.unshift(record);
+        this.metrics.recent.length = Math.min(20, this.metrics.recent.length);
+      }
+    }
   }
 
   async configure({ key, port = 3426 } = {}) {
@@ -125,7 +145,7 @@ export class KimiWorkGateway {
     }
     this.connection = { key };
     if (!this.server) {
-      const server = http.createServer((req, res) => { void this.forward(req, res); });
+      const server = http.createServer((req, res) => { void this.observe(req, res); });
       server.requestTimeout = this.timeoutMs;
       server.headersTimeout = 15000;
       try {
@@ -203,6 +223,7 @@ export class KimiWorkGateway {
       if (prefix) model = model.slice(prefix.length);
       const selected = models.find(row => row.id === model);
       if (!selected) { error(409, 'model_not_enabled_for_kimi'); return; }
+      if (req.gatewayRecord) req.gatewayRecord.model = selected.id;
       const protocol = req.url === '/v1/responses' ? 'responses' : 'chat';
       if (selected.protocol !== protocol) { error(409, 'model_protocol_mismatch'); return; }
       payload = { ...payload, model };
@@ -234,6 +255,10 @@ export class KimiWorkGateway {
       }
       res.end();
     } catch (failure) {
+      if (req.gatewayRecord) {
+        req.gatewayRecord.status = controller.signal.aborted ? 499 : 503;
+        req.gatewayRecord.error = controller.signal.aborted ? 'request_cancelled' : 'upstream_connection_failed';
+      }
       if (res.headersSent) res.destroy();
       else error(controller.signal.aborted ? 499 : 503,
         controller.signal.aborted ? 'request_cancelled'

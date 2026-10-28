@@ -1,4 +1,5 @@
 import { normalizeSubagentPolicy } from './subagent-policy.mjs';
+import { normalizeTranslationConfig } from './translation-config.mjs';
 
 export function readConfig(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('invalid_config');
@@ -21,5 +22,6 @@ export function readConfig(value) {
     upstream: { baseURL: upstream.baseURL, apiKeyEnv: upstream.apiKeyEnv },
     models: value.models, tokenEnv, port, dns: { enabled: dnsEnabled, port: dnsPort },
     ...(value.subagents === undefined ? {} : { subagents: normalizeSubagentPolicy(value.subagents, value.models) }),
+    ...(value.translation === undefined ? {} : { translation: normalizeTranslationConfig(value.translation) }),
   };
 }

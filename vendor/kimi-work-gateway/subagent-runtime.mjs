@@ -9,7 +9,10 @@ import { SUBAGENT_HOOK_VERSION } from './subagent-hook.mjs';
 
 const KERNEL = 'app/daimon/dist/kimi-code-v2/kernel-bundle.mjs';
 const HOOK = 'kwg-subagent-hook.mjs';
-const SUPPORTED = new Set(['3.2.21:ea0a2ec58a26bd0365401e14251b33b7a547dd31bfd423f61699ac362026d1af']);
+const SUPPORTED = new Set([
+  '3.2.21:ea0a2ec58a26bd0365401e14251b33b7a547dd31bfd423f61699ac362026d1af',
+  '3.2.21:3e20b395026c2257d600ac9fda97e27d3ef07fc1f24361a85d890f6efc23778f',
+]);
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const sourceText = file => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 const hookFile = fileURLToPath(new URL('./subagent-hook.mjs', import.meta.url));
@@ -202,13 +205,18 @@ export class SubagentRuntime {
     } catch { return { state: 'conflict' }; }
   }
 
-  async launch({ isRunning, spawnApp = spawn } = {}) {
+  launchContext() {
     const status = this.inspect();
     if (!['loaded', 'pending-policy', 'waiting-launch'].includes(status.state)) throw Error('subagent_runtime_not_ready');
     const manifest = readSubagentJSON(this.manifestFile);
     if (!manifest.application || !fs.existsSync(manifest.application)) throw Error('subagent_kimi_unavailable');
     const policy = readSubagentJSON(this.policyPath);
     if (policy?.schemaVersion !== 1 || !['inherit', 'force'].includes(policy.mode)) throw Error('subagent_policy_unavailable');
+    return manifest;
+  }
+
+  async launch({ isRunning, spawnApp = spawn } = {}) {
+    const manifest = this.launchContext();
     let running = isRunning?.();
     if (running === undefined) {
       const executable = path.basename(manifest.application).replace(/\.exe$/i, '');

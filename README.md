@@ -2,7 +2,7 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.4.0 新增可选原生子代理模型控制。** BYOK 核心接入已在 macOS 上以 Kimi 3.2.21、Magpie 0.1.1659、Magpie Bun 1.4.4 实测；Windows 分支已有测试与 CI 覆盖，原生子代理适配仅接受下文列出的已知内核。Windows + Kimi + UAC 与桌面启动仍待真机验收，Linux 未适配。
+**v0.4.2 升级嵌入式核心到 0.5.0**，继承核心的 Windows 子代理修复：新增一个已校验的 Kimi 3.2.21 内核哈希，并把 `compat` 的源码标记从"缺失即不兼容"改为"未观察到不代表缺失"。子代理控制自 v0.4.0 起提供。BYOK 核心接入已在 macOS 上以 Kimi 3.2.21、Magpie 0.1.1659、Magpie Bun 1.4.4 实测；Windows 分支已有测试与 CI 覆盖，原生子代理适配仅接受下文列出的已知内核。Windows + Kimi + UAC 与桌面启动仍待真机验收，Linux 未适配。
 
 原生 BYOK 接入不修改 Magpie 或 Kimi 的安装目录、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里。
 
@@ -10,14 +10,16 @@
 
 ## 与通用核心的关系
 
-本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。
+本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。当前嵌入核心为 **0.5.0**（`1cad55fc911a66127259691108a2eaf2161d3fc5`）。
 
 | 位置 | 作用 |
 | --- | --- |
-| `vendor/kimi-work-gateway/` | 核心库的固定副本：监听、鉴权、目录、转发、DNS、准备流程 |
-| `vendor/VENDOR.json` | 核心版本与每个文件的 SHA-256；`bun run vendor:verify` 与 CI 都会校验 |
+| `vendor/kimi-work-gateway/` | 核心库的固定副本：监听、鉴权、目录、转发、DNS、准备流程、子代理策略 |
+| `vendor/VENDOR.json` | 核心版本、来源提交与每个文件的 SHA-256；`bun run vendor:verify` 与 CI 都会校验 |
 | `magpie-backend.mjs` | 把 Magpie 的模型目录翻译成核心模型，并把请求发回 Magpie 网关 |
 | `native-byok.mjs` | 兼容包装器，保留原有调用方式（`configure({url, key, port})`、`nativeCatalog`） |
+
+插件只嵌入它实际运行的核心模块，不复制独立 CLI、Web 面板和翻译宿主。`vendor/kimi-work-gateway/index.mjs` 因此是**投影**而非原文：只保留导出目标都在嵌入清单里的 `export … from` 语句，`VENDOR.json` 的 `projection` 字段记录其原始 `src/index.mjs` 的 SHA-256 与被去掉的模块。翻译设置页与翻译运行时属于独立网关，不在本插件中，插件界面也没有新增翻译入口。
 
 升级核心时执行 `bun run vendor:sync ../kimi-work-gateway`，将相邻的核心仓库路径作为参数，再运行测试与哈希校验。其他目录布局请传入对应的核心仓库路径。插件不联网拉取核心，也不在安装时构建。
 
@@ -181,7 +183,14 @@ $REQUEST_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
 切换目标后，对后续新建的普通原生子代理生效；已经运行的子代理不会被换模型。`fork` 必须继承父模型，强制模式下会明确拒绝，改用普通新建子代理。恢复旧子代理时，保存的模型与强制目标不一致也会拒绝，避免改写旧上下文；一致时允许恢复。关闭接入或插件正常退出会按文件归属恢复 `inherit`，旧宿主不会覆盖新宿主的策略。下次从 Kimi 普通入口启动即可不使用副本。
 
-当前允许的来源为 Kimi **3.2.21**，内核规范化 SHA-256 为 `ea0a2ec58a26bd0365401e14251b33b7a547dd31bfd423f61699ac362026d1af`。相同版本但内核不同也会拒绝；新 Kimi 版本须重新核对接入口和实跑后加入支持范围。它不是 Kimi 或 Magpie 的官方稳定子代理 API。
+当前允许的来源为 Kimi **3.2.21**，内核规范化 SHA-256 为以下两者之一：
+
+- `ea0a2ec58a26bd0365401e14251b33b7a547dd31bfd423f61699ac362026d1af`
+- `3e20b395026c2257d600ac9fda97e27d3ef07fc1f24361a85d890f6efc23778f`（本轮 Windows 适配修复补充的内核）
+
+相同版本但内核不同也会拒绝；新 Kimi 版本须重新核对接入口和实跑后加入支持范围。它不是 Kimi 或 Magpie 的官方稳定子代理 API。第二个哈希只表示准备阶段接受该内核，**Windows 真机的完整调用链仍未验收**。
+
+`compat` 的 `runtime source markers` 是源码文本观察结果：标记为 `not-observed` 可能是因为混淆隐藏了字符串，不等于该能力在运行时缺失，因此不会单独把状态判成 `incompatible`。
 
 ## 状态与排查
 
@@ -229,7 +238,8 @@ SETUP_AT=$(($(date +%s) * 1000))
 - 核心的原生验收用 Node 24 加载本地生成副本中的真实 Work adapter 与内核，经网关访问本地模拟上游，验证父 A → 子 B → 父 A、跨协议、推理档位、配置重建、关闭以及 fork/resume 冲突。未调用付费模型。没有安装受支持 Kimi 或 Node 24 的环境会跳过此项；普通 CI 不代替真实内核验收。
 - 已在本机 Magpie 0.1.1692 停用旧本地插件并启用本版，宿主报告 6 个模型兼容检查通过、GLM-5.3 Flash/high 子代理目标已保存。已通过本插件准备真实 Kimi 3.2.21 的运行时副本；Kimi 运行时的启动检查返回 `waiting-kimi-exit`，未结束用户进程。真实桌面从适配入口启动后的完整调用链仍需单独验收；保存目标和准备成功本身不表示已接管。
 - **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
-- 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。
+- 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。该文件同时记录 `index.mjs` 是 allowlist 投影、其原始来源 SHA-256、核心版本与来源提交。
+- **v0.4.2 本地验证**：以核心 `1cad55fc…` 执行 `vendor:sync` 后，`vendor:verify`、`bun run check`、Bun 1.4.2 与 1.4.4 下的 `bun test`（58 项，其中 vendor 用例 6 项）以及两版 Bun 的 `verify-package` 均通过。这些验证不包含 Windows 真机，也没有调用付费模型。
 - Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
 
 开发验证：
