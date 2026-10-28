@@ -1,7 +1,7 @@
 {
   "name": "kimi-work-gateway",
   "version": "0.6.0",
-  "commit": "a15753aefcd78aa75c5df23c41508a631cb35e44",
+  "commit": "9ec5639a2dce4378f188f5892482d09958481eb8",
   "files": {
     "config.mjs": "e72f29eef9dbdc0f0e5688e8cba02a86967a78bafc496db752e7d3a355722aea",
     "gateway.mjs": "f44bd28df4870dd64dd4ccced3dabf66e7b3c590fa6ce0f640414c7e886ce363",
