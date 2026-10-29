@@ -8,6 +8,8 @@ export { NativeSetup, resolverScript, hostsScript, updateHosts, hostsEntry, HOST
 export { NativeSetupProbe } from './native-status.mjs';
 export { copySetupToken, defaultClipboardCopy } from './native-clipboard.mjs';
 export { SubagentPolicy, normalizeSubagentPolicy } from './subagent-policy.mjs';
+export { NativeSubagentConfig } from './native-subagent-config.mjs';
+export { NativeSubagentBridge, inspectNativeSubagentContract, bindNativeSubagents } from './native-subagent-bridge.mjs';
 export { SubagentRuntime, findSubagentInstallation } from './subagent-runtime.mjs';
 export { probeSubagentKernel, SUBAGENT_ADAPTER_VERSION } from './subagent-structure.mjs';
 export { normalizeTranslationConfig, TRANSLATION_DEFAULTS, TRANSLATION_LANGUAGES } from './translation-config.mjs';

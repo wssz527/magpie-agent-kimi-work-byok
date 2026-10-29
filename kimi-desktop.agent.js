@@ -15,7 +15,7 @@ export const agent = {
     skills: directory + '/library-skills',
   },
   ua: ['Desktop Kimi Work'],
-  notice: '这里选择原生子代理的强制模型；主模型仍在 Kimi Work 菜单中选择。子代理接管需准备并从适配入口启动 Kimi，查看 status.json 的 subagents 状态。',
+  notice: '请在本页「Kimi Work 模型设置」分别选择主模型、固定子模型或子代理池。保存新设置后优先使用原生配置同步；卡片上的单模型选择器保留旧接入目标。',
 };
 
 export function connect({ gateway, model }) {

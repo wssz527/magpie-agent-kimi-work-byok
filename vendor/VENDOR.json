@@ -1,11 +1,11 @@
 {
   "name": "kimi-work-gateway",
-  "version": "0.6.4",
-  "commit": "b78015d0a90f34f69acc49c50d5d447b6c472d10",
+  "version": "0.7.0",
+  "commit": "a94c28c0aeb58e33597315baf02ca3d751ab8e0f",
   "files": {
     "config.mjs": "e72f29eef9dbdc0f0e5688e8cba02a86967a78bafc496db752e7d3a355722aea",
-    "gateway.mjs": "f44bd28df4870dd64dd4ccced3dabf66e7b3c590fa6ce0f640414c7e886ce363",
-    "index.mjs": "c88d4c639e75034eaf87f2bfd5248e840c859b37b98d13076a698eb4d5748718",
+    "gateway.mjs": "a82e0dbdbdb0bc43233e1ef9e8111dc6cc68605bec953174437fa834b2f826c6",
+    "index.mjs": "6eb60625360122ba960070cc8277122ab48824ad8176e7b01480eaa67a03575b",
     "instructions.mjs": "71b9f45b82ed49f5133b75d70185a82e33dd1d901bf2046a214750825b84eaf2",
     "kimi-contract.mjs": "bbf40d2dcbf4f0dde7425b8b4e4c7b8099b1f34469f822ca0779eb875d1d5024",
     "native-clipboard.mjs": "c2f91fcb2f5b131a379033ab92867e4300bf2dbdc08c3ea811ef5f07cd45fef4",
@@ -14,9 +14,11 @@
     "native-status.mjs": "7cc166685bef0f81985a8e02ce9a1dfb7484c4817fd00b15f5a04d8471094ccd",
     "openai-backend.mjs": "0f18652d6af6a2ad4d8612631933076938b1247654d5684194714bb347f5cfef",
     "paths.mjs": "2bca4cc95c09c733c2bb97cba23e6ace8167c06ce6a5a447a50477452c530f23",
-    "subagent-policy.mjs": "5a13df32c462e5561cb060acbb16c1393c28a0b2c52019805df763faf3d62dbc",
+    "subagent-policy.mjs": "4dffb0cbc3d409012dfb36912a5f4c27d9b044dc1dd4725a2ce42a86f7200192",
+    "native-subagent-config.mjs": "6b2ac32350930a774b74b03d8c7d95b93bba9a053f3cb5bd785af533ac0a0a70",
+    "native-subagent-bridge.mjs": "def3db4319790bef3c516d47108ebdf821c9e8374b6e31ef04dd41f13b8237f3",
     "subagent-hook.mjs": "9e7d943f26b23e0215df4df3bba95a1cecddb19c00efede80b2cf99c72b0eb70",
-    "subagent-runtime.mjs": "257ee5259c26e645f15efc49646a56038bfdc1738d67c6a0d2f4374a758006a7",
+    "subagent-runtime.mjs": "c54280ae98f104b7a75b65cf017b9deecddd0e36488baad6c66fff9c1b10a441",
     "subagent-structure.mjs": "5629cba8ed87f898b05db82063b2869a39599ece356f70613b07ddf403c14fec",
     "subagent-launch-contract.mjs": "87e2da6daa7083a9387d368ce7859e571488024f5a59c9bb4c81886821eccc8f",
     "translation-config.mjs": "a05f27976f7b5a7c7c2dfb38ca820fe33f486b93039769adbee62bead7230ae3",
@@ -25,7 +27,7 @@
   "projection": {
     "index.mjs": {
       "source": "src/index.mjs",
-      "sourceSha256": "59bbec68c942c19260050682799027ab397dc558e6651eb2484d953b4a7969cd",
+      "sourceSha256": "20e05bfda1636df56f6164f37a97d49938b88b522feef462c6885a87bc945f0b",
       "mode": "allowlist-reexports",
       "dropped": [
         "translation-runtime.mjs",

@@ -227,6 +227,12 @@ export class KimiWorkGateway {
       const protocol = req.url === '/v1/responses' ? 'responses' : 'chat';
       if (selected.protocol !== protocol) { error(409, 'model_protocol_mismatch'); return; }
       payload = { ...payload, model };
+      const blocked = await this.beforeRequest?.(protocol, payload);
+      if (blocked) {
+        if (blocked.status === 503) res.setHeader('Retry-After', '1');
+        error(blocked.status, blocked.code);
+        return;
+      }
       if (this.instructionsFile) {
         try { payload = applySharedInstructions(payload, this.instructionsFile, req.url); }
         catch (failure) {

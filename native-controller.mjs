@@ -4,6 +4,7 @@ import { KimiAdapter } from './adapter.mjs';
 import { NativeByokGateway } from './native-byok.mjs';
 import { NativeSetupProbe } from './native-status.mjs';
 import { NativeSubagents } from './native-subagents.mjs';
+import { WorkPanel } from './work-panel.mjs';
 import { copySetupToken } from './native-clipboard.mjs';
 import { NativeSetup, defaultHostsPath, hostsEntry } from './native-setup.mjs';
 import { NativeByokDNS, BYOK_DNS_PORT, resolverConfiguration } from './native-dns.mjs';
@@ -19,11 +20,19 @@ export class LocalKimiAdapter extends KimiAdapter {
     this.options = options;
     this.nativeGateway = new NativeByokGateway({ fetchImpl: this.fetchImpl, instructionsFile: this.instructionsFile });
     this.nativeDNS = new NativeByokDNS();
-    this.subagents = new NativeSubagents({ stateDir: this.stateDir, kimiDir: this.kimiDir, runtime: options.subagentRuntime });
+    this.subagents = new NativeSubagents({ stateDir: this.stateDir, kimiDir: this.kimiDir, runtime: options.subagentRuntime, native: options.nativeSubagents });
+    this.nativeGateway.gateway.beforeRequest = (protocol, payload) => this.nativeSubagentInitializing
+      ? { status: 503, code: 'subagent_policy_initializing' } : this.subagents.beforeRequest(protocol, payload);
+    this.workPanel = new WorkPanel(this, options.panelFile ? { file: options.panelFile } : {});
     this.nativeProbe = new NativeSetupProbe({
       flagFile: options.flagFile || path.join(path.dirname(path.dirname(this.kimiDir)), 'kimi-agent', 'byok-availability.json'),
       ...(options.lookupFn ? { lookupFn: options.lookupFn } : {}),
     });
+  }
+
+  report(code, details = {}) {
+    super.report(code, details);
+    this.workPanel?.publish(this.status, this.nativeGateway?.models || []);
   }
 
   runner() {
@@ -34,6 +43,8 @@ export class LocalKimiAdapter extends KimiAdapter {
     await this.nativeGateway.stop();
     await this.nativeDNS.stop();
     this.nativeCatalogAfter = 0;
+    this.appliedSubagentSelection = undefined;
+    this.nativeSubagentInitializing = false;
     this.subagentClose = { policy: { mode: 'inherit' } };
     try { this.subagents.close(); }
     catch { this.subagentClose = { policy: { mode: 'blocked', reason: 'subagent_policy_close_failed' } }; }
@@ -51,6 +62,11 @@ export class LocalKimiAdapter extends KimiAdapter {
       }
       return super.tick();
     }
+    const subagentSelection = this.options.workModels?.subagents ?? desired.subagents;
+    const selectionKey = JSON.stringify(subagentSelection);
+    this.nativeSubagentInitializing = selectionKey !== this.appliedSubagentSelection
+      && (subagentSelection?.transport === 'native-config' || subagentSelection?.mode === 'pool'
+        || this.subagents.nativeActive || this.subagents.nativeRestoring);
     this.running = true;
     try {
       if (!this.bootstrap() || !this.ownLock()) return;
@@ -123,10 +139,17 @@ export class LocalKimiAdapter extends KimiAdapter {
         catch { value = { state: 'unverified', reason: 'probe_failed' }; }
         this.compat = { at: Date.now(), key: compatKey, value };
       }
+      if (imported) await this.workPanel.selectMain(this.options.workModels?.mainModelRequest, models, runner);
+      const subagentStatus = await this.subagents.update(subagentSelection, models, this.options.subagentRequest);
+      if (this.nativeSubagentInitializing) {
+        this.appliedSubagentSelection = selectionKey;
+        this.nativeSubagentInitializing = false;
+      }
       this.report(code, {
         mode: 'native-byok', gatewayReady: true, url, models: models.length,
         setup: { ...setup, imported, missingProviders }, dnsListening: Boolean(this.nativeDNS.socket),
-        subagents: await this.subagents.update(desired.subagents, models, this.options.subagentRequest),
+        subagents: subagentStatus,
+        panel: this.workPanel.publication,
         compat: { state: this.compat.value.state, version: this.compat.value.version ?? null,
           scope: 'active-models', modelCount: models.length,
           ...(this.compat.value.accepted ? { accepted: this.compat.value.accepted.length } : {}),

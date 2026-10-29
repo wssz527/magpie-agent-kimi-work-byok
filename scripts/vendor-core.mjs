@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const CORE_FILES = ['config.mjs', 'gateway.mjs', 'index.mjs', 'instructions.mjs', 'kimi-contract.mjs',
   'native-clipboard.mjs', 'native-dns.mjs', 'native-setup.mjs', 'native-status.mjs', 'openai-backend.mjs',
-  'paths.mjs', 'subagent-policy.mjs', 'subagent-hook.mjs', 'subagent-runtime.mjs', 'subagent-structure.mjs',
+  'paths.mjs', 'subagent-policy.mjs', 'native-subagent-config.mjs', 'native-subagent-bridge.mjs', 'subagent-hook.mjs', 'subagent-runtime.mjs', 'subagent-structure.mjs',
   'subagent-launch-contract.mjs', 'translation-config.mjs', 'LICENSE'];
 
 export const INDEX_FILE = 'index.mjs';

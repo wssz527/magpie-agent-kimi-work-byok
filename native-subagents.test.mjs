@@ -99,3 +99,29 @@ test('an unavailable selected child blocks an explicit launch while keeping prep
   expect(status.operation).toEqual({ state: 'failed', reason: 'subagent_policy_blocked' });
   expect(calls).toEqual([]);
 });
+
+test('explicit native pools bypass the disabled copy launcher and retain revocation checks', async () => {
+  const { options, calls } = fixture(); const updates = [];
+  const native = { update(policy) { updates.push(policy); return { state: 'file-applied', transport: 'native-config' }; },
+    beforeRequest() { return updates.at(-1).mode === 'blocked' ? { status: 409, code: 'subagent_model_unavailable' } : undefined; }, close() { calls.push('restore-native'); } };
+  const control = new NativeSubagents({ ...options, native });
+  const desired = { mode: 'pool', model: models[0].id, models: [{ id: models[0].id, description: 'Independent review' }] };
+  expect((await control.update(desired, models, { id: 'prepare-native-0001', action: 'prepare', at: Date.now() })).runtime.state).toBe('file-applied');
+  expect(updates.at(-1).modelAlias).toBe('byok-kth-resp/' + models[0].id); expect(calls).toEqual([]);
+  expect((await control.update(desired, [])).policy.mode).toBe('blocked');
+  expect(control.beforeRequest('responses', {})).toEqual({ status: 409, code: 'subagent_model_unavailable' });
+  await control.update({ mode: 'inherit', transport: 'native-config' }, models);
+  expect(updates.at(-1).mode).toBe('inherit'); control.close(); expect(calls).toEqual(['restore-native']);
+});
+
+test('native restore conflicts remain visible on disable', async () => {
+  const { options } = fixture();
+  const native = { update: () => ({ state: 'inherit' }), close: () => ({ state: 'conflict', reason: 'modified_block' }) };
+  const control = new NativeSubagents({ ...options, native });
+  await control.update({ mode: 'inherit', transport: 'native-config' }, models);
+  expect(() => control.close()).toThrow('subagent_native_restore_conflict');
+  expect(read(control.policy.file).mode).toBe('inherit');
+  const legacy = new NativeSubagents({ ...options, native });
+  await legacy.update(undefined, models);
+  expect(() => legacy.close()).not.toThrow();
+});

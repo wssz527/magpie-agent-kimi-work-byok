@@ -1,12 +1,13 @@
 import path from 'node:path';
-import { SubagentPolicy, SubagentRuntime } from './vendor/kimi-work-gateway/index.mjs';
+import { SubagentPolicy, SubagentRuntime, NativeSubagentBridge } from './vendor/kimi-work-gateway/index.mjs';
 import { readSubagentJSON, writeSubagentJSON } from './vendor/kimi-work-gateway/subagent-policy.mjs';
 
 const reason = error => /^subagent_[a-z_]+$|^invalid_subagent_[a-z_]+$/.test(error?.message) ? error.message : 'subagent_operation_failed';
 
 export class NativeSubagents {
-  constructor({ stateDir, kimiDir, runtime } = {}) {
+  constructor({ stateDir, kimiDir, runtime, native } = {}) {
     this.policy = new SubagentPolicy({ stateDir, kimiDir });
+    this.native = native || new NativeSubagentBridge({ stateDir, kimiDir });
     this.runtime = runtime || new SubagentRuntime({ stateDir: path.resolve(stateDir) });
     this.receiptFile = path.join(stateDir, 'subagent-operation-receipt.json');
   }
@@ -46,6 +47,13 @@ export class NativeSubagents {
     let policy;
     try { policy = this.policy.configure(desired, models); }
     catch (error) { policy = { mode: 'blocked', reason: reason(error) }; }
+    const native = desired?.transport === 'native-config' || desired?.mode === 'pool';
+    if (native || this.nativeActive || this.nativeRestoring) {
+      this.nativeActive = native;
+      this.runtimeStatus = this.native.update(native ? { ...policy, transport: 'native-config' } : { mode: 'inherit', transport: 'native-config' });
+      this.nativeRestoring = !native && this.runtimeStatus.state === 'conflict';
+      if (native || this.nativeRestoring) return { policy, runtime: this.runtimeStatus };
+    }
     try { await this.operate(request, policy); }
     catch (error) { this.operation = { state: 'failed', reason: reason(error) }; }
     const key = JSON.stringify(policy);
@@ -57,5 +65,11 @@ export class NativeSubagents {
     return { policy, runtime: this.runtimeStatus, ...(this.operation ? { operation: this.operation } : {}) };
   }
 
-  close() { this.policy.close(); }
+  beforeRequest(protocol, payload) { if (this.nativeActive || this.nativeRestoring) return this.native.beforeRequest(protocol, payload); }
+  close() {
+    let restored;
+    try { if (this.nativeActive || this.nativeRestoring) restored = this.native.close(); } finally { this.policy.close(); }
+    if (restored?.state === 'conflict') throw Error('subagent_native_restore_conflict');
+    return restored;
+  }
 }

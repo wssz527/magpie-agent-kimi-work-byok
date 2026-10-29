@@ -2,15 +2,15 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.5.4 优先按实际结构与运行契约兼容 Kimi，不再用版本号或来源哈希白名单拦截。** 子代理适配会检查实际配置、创建、运行和档案接点；结构保持兼容且桌面应用允许加载副本时，Kimi 升级后可重新准备本地副本，无需跟着升级插件。BYOK 核心接入已有 macOS Kimi 3.2.21 的实测记录，Windows 有分支测试和 CI；真实 UAC、真实 hosts 修改与登录后的完整 Work 流程仍未联合验收，Linux 未适配。`compat` 的源码标记只是文本观察，未观察到时不代表运行时能力缺失。
+**按实际结构与运行契约检查兼容性，不用版本号或来源哈希白名单放行。** 模型目录、原生配置同步和旧副本接入分别检查；某一路径不支持时明确报告。BYOK 核心已有 macOS Kimi 3.2.21 实测记录，原生池有未修改内核和适配器经本地模拟网关的调用证据。Windows 有分支测试和 CI，真实 UAC、真实 hosts 与登录后的完整 Work 流程仍未联合验收，Linux 未适配。`source-compatible` 和目录 `compat` 都不是正式应用全功能验收承诺。
 
 原生 BYOK 接入不修改 Magpie 或 Kimi 的安装目录、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里。
 
-**可选原生子代理模型控制**依赖桌面应用允许通过 `DAIMON_BUNDLE_DIR` 加载本地适配副本。已确认当前正式版 Kimi 3.2.21 忽略该变量，本版明确报告 `unsupported / packaged_bundle_override_disabled`，不把准备成功或等待启动当作已接管。主模型 BYOK 不依赖此能力；主模型仍由 Work 菜单选择。本插件复用 Magpie 原生 Agent 选择器、模型目录、凭证、路由和用量。独立网关从 v0.3.0 起提供 `panel --config gateway.json` 本机 Web 控制面板；独立版的思考翻译入口不包含在本插件内，插件不需要另开网关或面板。
+**新增原生子代理模型池与 Magpie Agent 内嵌设置面板。** 在「Kimi Work 模型设置」分别选择主模型、固定子模型或多模型池。新原生配置路径不依赖副本启动；旧的 `DAIMON_BUNDLE_DIR` 路径在正式版 Kimi 3.2.21 中仍报告 `unsupported / packaged_bundle_override_disabled`。旧设置不会自动迁移，需显式保存新设置。模型、凭证、路由和用量继续由 Magpie 管理；独立版的思考翻译入口不包含在本插件内，无需另开网关。
 
 ## 与通用核心的关系
 
-本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。当前嵌入核心为 **0.6.4**；准确来源提交与逐文件 SHA-256 见 `vendor/VENDOR.json`。
+本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。当前嵌入核心为 **0.7.0**；准确来源提交与逐文件 SHA-256 见 `vendor/VENDOR.json`。
 
 | 位置 | 作用 |
 | --- | --- |
@@ -78,13 +78,13 @@ magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
 magpie plugin update magpie-agent-kimi-work-byok
 ```
 
-`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.5.4`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
+`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.6.0`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
 
 插件更新会重启 Magpie 的插件宿主，正在流式返回的回答会先完成。更新不会改动 Kimi 的安装目录、原有接入设置或 `~/.config/magpie-kimi/` 里的状态；更新后仍需在 Kimi 的「第三方模型网关」里确认导入结果。
 
-打开并登录普通 Kimi 桌面应用，在 Magpie「Agent」中打开 **Kimi Work BYOK** 的接入开关。**卡片上的模型选择器指定原生子代理的强制模型，主模型继续在 Kimi Work 菜单中选择**。模型可见范围、账号凭证、路由与用量仍由 Magpie 管理。
+打开并登录普通 Kimi 桌面应用，在 Magpie「Agent」中打开 **Kimi Work BYOK** 的接入开关。完成 Kimi 导入后，在同页 **Kimi Work 模型设置** 分别配置主模型和子代理池；也可继续使用 Work 主模型菜单。卡片上的单模型选择器保留旧副本目标，新面板设置优先。模型可见范围、账号凭证、路由与用量仍由 Magpie 管理。
 
-已有 native-byok 配置如果没有 `subagents` 字段，继续使用 Kimi 原来的子代理绑定方式；旧版顶层 `model` 字段不会自动迁移成子代理目标。选择子代理模型后，还要完成下文的运行时准备与启动，保存选择本身不表示已生效。
+已有 native-byok 配置没有子代理字段时继续继承，旧版顶层 `model` 不自动迁移。新增原生配置同步须在面板显式保存；保存选择与实际请求采用分别显示。
 
 ## 首次准备
 
@@ -137,9 +137,25 @@ $SETUP_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 
 Kimi 菜单保存的是导入时的模型清单。**Kimi 自己每 24 小时重新拉取一次**目录，所以在 Magpie 增删可见模型后，最长一天内会自动更新；想立刻生效，再点一次“测试连接并导入模型”。每次实际推理前，插件都会重新校验当前可见目录；已撤销模型明确报错，不退回默认模型。
 
-## 强制原生子代理模型
+## 在 Agent 页面设置主模型和子代理池
 
-先完成上面的 BYOK 导入，再在 Magpie 的 **Kimi Work BYOK** 卡片选择子代理目标。它使用 Magpie 已有模型目录和 Agent 凭证，不复制 Magpie 的账号或新增推理服务。目标必须可见且支持工具调用；协议、上下文、输出限制和默认推理档位沿用该模型的真实能力。
+需要支持 `magpie.panels` 的 Magpie；当前已核对 0.1.1986 的官方插件接口。完成 BYOK 导入后，打开 **Agent → Kimi Work 模型设置**：
+
+1. **主会话**：选择模型后保存，插件等待 Work 空闲，再调用原生模型切换接口；也可保留 Work 当前选择。
+2. **子代理**：选择继承主模型、固定一个模型或从模型池选择。候选模型来自该 Agent 可见且支持工具调用的 Magpie 目录。
+3. **模型池**：勾选 1–32 个模型、填写各自用途并选择池内默认模型。保存后在新的 Work 任务中使用；`primary` 继承主模型，fork 跟随父会话，恢复的子代理保留旧模型。类型决定工具权限，用途说明不构成按类型强制绑定。
+
+保存通过 Magpie 官方插件选项桥完成，会重新加载插件宿主。新设置位于插件选项 `workModels.subagents`，优先于旧卡片单模型选择器；不自动迁移或启用旧目标。独立网关使用相同配置合同，见[原生子代理模型池](https://github.com/wssz527/kimi-work-gateway#原生子代理模型池)。
+
+原生同步不修改安装文件，也不要求从副本启动 Kimi。插件运行时只管理私有 TOML 中带归属标记的子代理区块；原有未受管区块、用户修改或路径冲突均保留并报告。`file-applied` 只证明配置写入，`observed-schema` 表示 Work 请求的工具定义已包含预期池和默认模型；固定模型模式不据此声称真实调用已采用。未加载的池返回可重试状态，避免旧工具定义被转发到上游。
+
+面板通过本插件自有静态资源发布脱敏模型目录与状态，不请求额外权限，不包含 Key、对话或上游地址。安装目录只读时会报告 `panel_assets_not_writable`；状态过期时禁止保存。运行时状态文件不随发行包分发。旧版 Magpie 没有面板时，可升级 Magpie 或使用独立网关面板。关闭前切回继承并确认撤销，再停用或卸载插件。
+
+主会话、压缩、图片理解和子代理的推理可以走第三方模型；标题、记忆、搜索、生图和语音有各自的服务或鉴权，详见[功能来源清单](https://github.com/wssz527/kimi-work-gateway#work-各功能的模型来源)。本插件不解锁会员功能、开启隐藏的 Tower 入口或将聊天 API 冒充专用媒体服务。
+
+## 旧副本子代理接入
+
+以下保留旧版严格固定模型路径，仅适用于允许 `DAIMON_BUNDLE_DIR` 的桌面构建。当前正式版 Kimi 3.2.21 禁用此入口，优先使用上文明确启用的原生配置同步。旧 Agent 卡片单模型选择器继续保存这一旧接入目标。
 
 首次使用需要显式准备本地运行时副本。macOS：
 
@@ -252,7 +268,7 @@ SETUP_AT=$(($(date +%s) * 1000))
 - 早期本机记录曾确认模型目录、GLM 目标保存和副本生成。本轮进一步确认正式版 Kimi 3.2.21 忽略副本环境变量；旧 `waiting-launch` 不能解释成接管。新版按实际能力报告不支持，主模型导入继续独立工作。
 - **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
 - 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。该文件同时记录 `index.mjs` 是 allowlist 投影、其原始来源 SHA-256、核心版本与来源提交。
-- **v0.5.4 验证**：重配置改为串行执行；配置未变且监听正常时直接复用，实际切换期间才暂时断开上游；监听失败恢复真实旧端口、旧凭证与旧上游，并保留随机端口配置语义。最终测试数量、分发包和 CI 结果以本次 Release 说明为准，不沿用旧版结果；不包含 Windows 真机，也没有调用付费模型。
+- **v0.6.0 验证**：新增原生子代理模型池（多候选、用途、默认项）与 Magpie Agents 内嵌设置面板；不依赖 `DAIMON_BUNDLE_DIR`，旧副本路径保持独立。隔离的真实 Magpie 宿主已加载面板并显示主模型、子模型与池设置；最终测试数量、分发包和 CI 结果以本次 Release 说明为准，不沿用旧版结果；不包含 Windows 真机，也没有调用付费模型。
 - Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
 
 开发验证：

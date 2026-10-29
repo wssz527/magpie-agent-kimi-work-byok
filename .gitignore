@@ -13,3 +13,5 @@ native-setup-receipt.json
 native-copy-receipt.json
 backups/
 *.log
+ui/.runtime-state.js
+ui/.runtime-state.js.*.tmp

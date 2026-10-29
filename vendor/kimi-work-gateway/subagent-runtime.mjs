@@ -65,7 +65,16 @@ function assertTree(directory) {
     for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
       const file = path.join(folder, entry.name);
       if (entry.isSymbolicLink()) {
-        const relative = path.relative(root, fs.realpathSync(file));
+        let target;
+        try { target = fs.realpathSync(file); }
+        catch (error) {
+          // A link this user cannot even read (for example a root-only helper
+          // in a newer Python runtime) cannot be proven to stay inside the
+          // bundle, so the copy channel refuses it instead of failing later.
+          if (['EACCES', 'EPERM'].includes(error.code)) throw Error('subagent_bundle_link_conflict');
+          throw error;
+        }
+        const relative = path.relative(root, target);
         if (relative.startsWith('..') || path.isAbsolute(relative)) throw Error('subagent_bundle_link_conflict');
       } else if (entry.isDirectory()) visit(file);
       else if (!entry.isFile()) throw Error('subagent_bundle_file_conflict');

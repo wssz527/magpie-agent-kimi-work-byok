@@ -11,7 +11,7 @@ export default async function KimiDesktop(input, options = {}) {
     };
     const adapter = await new KimiAdapter({ home: process.env.MAGPIE_KIMI_DATA_HOME || undefined,
       log, copyTokenRequest: options.copyTokenRequest, setupRequest: options.setupRequest,
-      subagentRequest: options.subagentRequest }).start();
+      subagentRequest: options.subagentRequest, workModels: options.workModels }).start();
     globalThis[instance] = adapter;
     // The shared host owns shutdown. Its normal exit path is synchronous;
     // never install signal handlers or terminate a host shared with plugins.
@@ -19,6 +19,6 @@ export default async function KimiDesktop(input, options = {}) {
   }
   globalThis[instance].options = { ...globalThis[instance].options,
     setupRequest: options.setupRequest, copyTokenRequest: options.copyTokenRequest,
-    subagentRequest: options.subagentRequest };
+    subagentRequest: options.subagentRequest, workModels: options.workModels };
   return {};
 }

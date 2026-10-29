@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kimi Work 模型设置</title>
+<link rel="stylesheet" href="panel.css">
+<script src="_magpie/bridge.js" defer></script>
+<script src="panel.js" defer></script>
+</head>
+<body>
+<main>
+  <header><h1>Kimi Work 模型设置</h1><p>主会话和子代理分别选择，模型来自此 Agent 可见的 Magpie 目录。</p></header>
+  <p id="runtime" role="status" aria-live="polite">正在读取插件状态…</p>
+  <form id="settings">
+    <section aria-labelledby="main-title">
+      <h2 id="main-title">主会话</h2>
+      <label for="main-model">切换 Work 主模型</label>
+      <select id="main-model"><option value="">保留 Work 当前选择</option></select>
+      <p class="hint" id="current-model">也可以直接使用 Work 的模型菜单。</p>
+    </section>
+    <section aria-labelledby="child-title">
+      <h2 id="child-title">子代理</h2>
+      <label for="mode">模型策略</label>
+      <select id="mode">
+        <option value="inherit">继承主模型</option>
+        <option value="force">固定一个模型</option>
+        <option value="pool">从模型池选择</option>
+      </select>
+      <p class="hint">保存后启用原生配置同步。只影响新建子代理；fork 跟随父会话，恢复的子代理沿用原模型。</p>
+      <div id="target-fields" hidden>
+        <label for="child-model" id="child-label">子代理模型</label>
+        <select id="child-model"></select>
+      </div>
+      <div id="effort-fields" hidden>
+        <label for="effort">思考档位</label><select id="effort"></select>
+      </div>
+      <div id="pool-fields" hidden>
+        <p class="hint">勾选候选模型并填写用途。默认模型须在池中；Agent、AgentSwarm、TowerSpawn 可通过 model 选择，primary 跟随主模型。</p>
+        <div id="pool" class="model-list"></div>
+      </div>
+    </section>
+    <p id="message" role="status" aria-live="polite"></p>
+    <footer><button id="reset" type="button">放弃修改</button><button id="save" type="submit" disabled>保存并应用</button></footer>
+  </form>
+  <details><summary>哪些功能跟随模型设置？</summary>
+    <p>对话、规划、工具调用、上下文压缩和支持的图片理解使用会话模型。各类普通子代理共用上述模型池，类型决定工具权限；用途说明帮助模型选择，不是按类型强制绑定。</p>
+    <p>搜索、网页抓取、图片生成和语音等有各自的服务接口。第三方聊天模型不能自动替代这些服务。思考翻译使用独立网关中的专用设置。</p>
+  </details>
+</main>
+</body>
+</html>

@@ -517,6 +517,29 @@ test('compatibility checks active models and invalidates cached results after ca
   } finally { await f.cleanup(); }
 });
 
+test('the plugin guards inference while a native subagent policy is still being applied', async () => {
+  const f = await controllerFixture();
+  try {
+    const home = path.join(f.adapter.kimiDir, 'runtime/kimi-code/home');
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, 'config.toml'),
+      'default_model = "byok-kth-resp/' + ids[0] + '"\n'
+      + [ids[0], ids[1]].map(id => '[models."byok-kth-resp/' + id + '"]\nprovider = "synthetic"\nmodel = "' + id + '"\n').join(''));
+    await f.adapter.tick();
+    f.adapter.options.workModels = { subagents: { mode: 'pool', transport: 'native-config', model: ids[0],
+      models: [{ id: ids[0], description: 'Default' }, { id: ids[1], description: 'Review' }] } };
+
+    // A newly saved native target must not forward inference before the first
+    // tick applies it: the gateway would otherwise send the old tool schema.
+    f.adapter.nativeSubagentInitializing = true;
+    expect(f.adapter.nativeGateway.gateway.beforeRequest('responses', { model: ids[0], input: [] }))
+      .toEqual({ status: 503, code: 'subagent_policy_initializing' });
+    await f.adapter.tick();
+    expect(f.adapter.nativeSubagentInitializing).toBe(false);
+    expect(f.adapter.nativeGateway.gateway.beforeRequest('responses', { model: ids[0], input: [] })).toBeUndefined();
+  } finally { await f.cleanup(); }
+});
+
 test('native requests with a mismatched model protocol never reach Magpie', async () => {
   const f = await fixture();
   try {

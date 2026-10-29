@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const patterns = process.argv.slice(2).length
   ? process.argv.slice(2)
-  : ['*.mjs', '*.js', 'scripts/*.mjs', 'vendor/kimi-work-gateway/*.mjs'];
+  : ['*.mjs', '*.js', 'scripts/*.mjs', 'ui/*.js', 'vendor/kimi-work-gateway/*.mjs'];
 
 function expand(pattern) {
   if (!pattern.includes('*')) return [pattern];
