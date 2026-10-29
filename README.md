@@ -10,7 +10,7 @@
 
 ## 与通用核心的关系
 
-本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。当前嵌入核心为 **0.7.0**；准确来源提交与逐文件 SHA-256 见 `vendor/VENDOR.json`。
+本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。当前嵌入核心为 **0.7.1**；准确来源提交与逐文件 SHA-256 见 `vendor/VENDOR.json`。
 
 | 位置 | 作用 |
 | --- | --- |
@@ -78,7 +78,7 @@ magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
 magpie plugin update magpie-agent-kimi-work-byok
 ```
 
-`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.6.0`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
+`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.6.1`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
 
 插件更新会重启 Magpie 的插件宿主，正在流式返回的回答会先完成。更新不会改动 Kimi 的安装目录、原有接入设置或 `~/.config/magpie-kimi/` 里的状态；更新后仍需在 Kimi 的「第三方模型网关」里确认导入结果。
 
@@ -268,7 +268,7 @@ SETUP_AT=$(($(date +%s) * 1000))
 - 早期本机记录曾确认模型目录、GLM 目标保存和副本生成。本轮进一步确认正式版 Kimi 3.2.21 忽略副本环境变量；旧 `waiting-launch` 不能解释成接管。新版按实际能力报告不支持，主模型导入继续独立工作。
 - **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
 - 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。该文件同时记录 `index.mjs` 是 allowlist 投影、其原始来源 SHA-256、核心版本与来源提交。
-- **v0.6.0 验证**：新增原生子代理模型池（多候选、用途、默认项）与 Magpie Agents 内嵌设置面板；不依赖 `DAIMON_BUNDLE_DIR`，旧副本路径保持独立。隔离的真实 Magpie 宿主已加载面板并显示主模型、子模型与池设置；最终测试数量、分发包和 CI 结果以本次 Release 说明为准，不沿用旧版结果；不包含 Windows 真机，也没有调用付费模型。
+- **v0.6.1 验证**：新增原生子代理模型池（多候选、用途、默认项）与 Magpie Agents 内嵌设置面板；不依赖 `DAIMON_BUNDLE_DIR`，旧副本路径保持独立。隔离的真实 Magpie 宿主已加载面板并显示主模型、子模型与池设置；最终测试数量、分发包和 CI 结果以本次 Release 说明为准，不沿用旧版结果；不包含 Windows 真机，也没有调用付费模型。
 - Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
 
 开发验证：
