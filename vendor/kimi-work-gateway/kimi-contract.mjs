@@ -103,17 +103,85 @@ export function installedVersion(archiveFile) {
 
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Skips a quoted literal in place. Regex literals are deliberately not
+// modelled: the bundle's ordinary functions are short and delimited by
+// `\n}`, so this scan is only used where a literal could hide a brace.
+function skipString(text, at) {
+  const quote = text[at];
+  for (at++; at < text.length; at++) {
+    if (text[at] === '\\') { at++; continue; }
+    if (text[at] === quote) return at;
+  }
+  return text.length;
+}
+
 function functionBody(text, name) {
-  const at = text.search(new RegExp('function ' + name + '\\([^)]*\\) \\{'));
+  const at = text.search(new RegExp('function ' + escape(name) + '\\([^)]*\\) \\{'));
   if (at < 0) return null;
   const end = text.indexOf('\n}', at);
   return end < 0 ? null : text.slice(at, end + 2);
 }
 
+// The string table holds megabytes of quoted text, so a `\n}` search finds a
+// closing brace inside a literal long before the function ends. Walking the
+// array with string awareness keeps the scan inside the declaration.
+function arrayEnd(text, open) {
+  let depth = 0;
+  for (let at = open; at < text.length; at++) {
+    const character = text[at];
+    if (character === '"' || character === "'" || character === '`') { at = skipString(text, at); continue; }
+    if (character === '[') depth++;
+    else if (character === ']') { depth--; if (depth === 0) return at; }
+  }
+  return -1;
+}
+
+// Closes the function body that contains an already-open brace, starting just
+// past the string array. Only literals are skipped: the tail of a table
+// function is a couple of assignments, and anything this cannot read reports
+// `unverified` instead of silently widening the slice.
+function tailEnd(text, from) {
+  let depth = 1;
+  for (let at = from; at < text.length; at++) {
+    const character = text[at];
+    if (character === '"' || character === "'" || character === '`') { at = skipString(text, at); continue; }
+    if (character === '{') depth++;
+    else if (character === '}') { depth--; if (depth === 0) return at; }
+  }
+  return -1;
+}
+
+// A table function declares one large array and returns it. Its body is found
+// by jumping over that array rather than by the first `\n}`.
+//
+// This deliberately reads one shape: a `const NAME = [` array within the first
+// few kilobytes of the function. A future obfuscator that declares the table
+// differently makes this return null, and `compat` then reports `unverified`
+// rather than guessing — the safe direction for a probe that must never
+// certify a build it could not read.
+function tableBodyOf(text, name) {
+  const at = text.search(new RegExp('function ' + escape(name) + '\\([^)]*\\) \\{'));
+  if (at < 0) return null;
+  // The declaration is the first statement of the function, so the window is
+  // cut at the next `\n}` or `\nfunction` as well as at a fixed length: reading
+  // past those would let a neighbour's array be mistaken for this one.
+  let head = text.slice(at, at + 4096);
+  for (const boundary of ['\n}', '\nfunction ']) {
+    const cut = head.indexOf(boundary);
+    if (cut >= 0) head = head.slice(0, cut);
+  }
+  const declaration = /const _0x[0-9a-f]+ = \[/.exec(head);
+  if (!declaration) return null;
+  const close = arrayEnd(text, at + declaration.index + declaration[0].length - 1);
+  if (close < 0) return null;
+  const end = tailEnd(text, close + 1);
+  return end < 0 ? null : text.slice(at, end + 1);
+}
+
 // The bootstrap IIFE is the only `})(NAME, <number>)` in the bundle.
 export function findTableFunction(text) {
   for (const match of text.matchAll(/\}\)\((_0x[0-9a-f]+),\s*(\d+)\)/g)) {
-    const body = functionBody(text, match[1]);
+    const body = tableBodyOf(text, match[1]);
     if (body && /return _0x[0-9a-f]+;/.test(body) && /const _0x[0-9a-f]+ = \[/.test(body)) {
       return { name: match[1], seed: Number(match[2]), at: match.index, footer: match[0] };
     }
@@ -354,7 +422,7 @@ export function locateContract(text) {
   const decoder = findDecoder(text);
   if (!decoder) return { ok: false, reason: 'decoder_not_found', table: table.name };
 
-  const tableBody = functionBody(text, table.name);
+  const tableBody = tableBodyOf(text, table.name);
   const decoderBody = functionBody(text, decoder.name);
   if (!tableBody || !decoderBody) return { ok: false, reason: 'bootstrap_unreadable' };
 

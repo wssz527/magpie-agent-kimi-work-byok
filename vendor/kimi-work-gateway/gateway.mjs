@@ -26,6 +26,30 @@ async function limited(stream, limit) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+// A declared length over the limit is refused before any byte is buffered. The
+// body is still drained first: answering while the client is mid-write makes
+// Bun drop the status line, and the caller would see an empty 200 instead of
+// the rejection. `true` means the body ended or the client went away; `false`
+// means the wait timed out with a client that stopped sending.
+async function drain(stream, timeoutMs = 2000) {
+  return new Promise(resolve => {
+    let done = false;
+    const stop = ended => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      for (const name of ['end', 'error', 'close']) stream.removeListener(name, listener);
+      resolve(ended);
+    };
+    const listener = () => stop(true);
+    const timer = setTimeout(() => stop(false), timeoutMs);
+    stream.on('end', listener);
+    stream.on('error', listener);
+    stream.on('close', listener);
+    stream.resume();
+  });
+}
+
 const text = value => typeof value === 'string' && value.length <= 2048 && !/[\x00-\x1f]/.test(value) ? value : '';
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const lastSegment = id => id.slice(id.lastIndexOf('/') + 1).toLowerCase();
@@ -210,9 +234,22 @@ export class KimiWorkGateway {
         return;
       }
       let payload;
-      try { payload = JSON.parse(await limited(req, BODY_LIMIT)); }
-      catch (failure) {
+      try {
+        const declared = Number(req.headers['content-length']);
+        if (Number.isFinite(declared) && declared > BODY_LIMIT) {
+          // The body is drained once here; the catch below must not drain a
+          // second time, which would double the wait for a stalled client.
+          const ended = await drain(req);
+          const failure = Error('request_too_large');
+          failure.drained = true;
+          throw failure;
+        }
+        payload = JSON.parse(await limited(req, BODY_LIMIT));
+      } catch (failure) {
         const tooLarge = failure.message === 'request_too_large';
+        // `drained` is set as soon as a drain was attempted, timed out or not:
+        // a stalled client must not be drained twice.
+        if (tooLarge && failure.drained === undefined && !req.readableEnded) await drain(req);
         error(tooLarge ? 413 : 400, tooLarge ? 'request_too_large' : 'invalid_json');
         return;
       }

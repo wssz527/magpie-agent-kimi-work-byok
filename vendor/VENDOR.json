@@ -1,13 +1,13 @@
 {
   "name": "kimi-work-gateway",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "commit": "b52dd7c636458f999c03e003111926378deb50ab",
   "files": {
     "config.mjs": "e72f29eef9dbdc0f0e5688e8cba02a86967a78bafc496db752e7d3a355722aea",
-    "gateway.mjs": "a82e0dbdbdb0bc43233e1ef9e8111dc6cc68605bec953174437fa834b2f826c6",
+    "gateway.mjs": "b1af504d9371b8fd9111f91af4cf4f5232de0e8759cec9c6fc38ae828a0cc53a",
     "index.mjs": "6eb60625360122ba960070cc8277122ab48824ad8176e7b01480eaa67a03575b",
     "instructions.mjs": "71b9f45b82ed49f5133b75d70185a82e33dd1d901bf2046a214750825b84eaf2",
-    "kimi-contract.mjs": "bbf40d2dcbf4f0dde7425b8b4e4c7b8099b1f34469f822ca0779eb875d1d5024",
+    "kimi-contract.mjs": "acbfcbd8ef6b10f1a7331abbeb9226421baf4fb302273a66330b4e40e5d80bfb",
     "native-clipboard.mjs": "c2f91fcb2f5b131a379033ab92867e4300bf2dbdc08c3ea811ef5f07cd45fef4",
     "native-dns.mjs": "90f5fdcdfd0507f93d1d2952294755425e0d9f6bf00ed42f59cf766b6bc15f23",
     "native-setup.mjs": "e1207727ba15d070dc5012dd6a8016ccd8973926b4c329c37d1f2698695f27f9",

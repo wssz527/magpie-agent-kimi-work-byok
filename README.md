@@ -78,7 +78,7 @@ magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
 magpie plugin update magpie-agent-kimi-work-byok
 ```
 
-`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.6.2`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
+`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.6.3`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
 
 插件更新会重启 Magpie 的插件宿主，正在流式返回的回答会先完成。更新不会改动 Kimi 的安装目录、原有接入设置或 `~/.config/magpie-kimi/` 里的状态；更新后仍需在 Kimi 的「第三方模型网关」里确认导入结果。
 
@@ -269,6 +269,7 @@ SETUP_AT=$(($(date +%s) * 1000))
 - **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
 - 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。该文件同时记录 `index.mjs` 是 allowlist 投影、其原始来源 SHA-256、核心版本与来源提交。
 - **v0.6.2 验证**：新增原生子代理模型池（多候选、用途、默认项）与 Magpie Agents 内嵌设置面板；不依赖 `DAIMON_BUNDLE_DIR`，旧副本路径保持独立。隔离的真实 Magpie 宿主已加载面板并显示主模型、子模型与池设置；最终测试数量、分发包和 CI 结果以本次 Release 说明为准，不沿用旧版结果；不包含 Windows 真机，也没有调用付费模型。
+- **v0.6.3 验证**：同步核心 0.7.2 的两处修复。`compat` 对 Kimi 3.2.22 由误报 `table_not_found` 变为 `verified`（5 个样例模型全部接受），修法只作用于字符串表函数，未改其余函数的切分方式。超限请求体在客户端仍在写入时不再丢状态码，且停滞客户端只等待一次 drain 窗口。新增两条回归用例，均已验证在旧实现上失败。本机 macOS 上核心 389 项、插件 70 项测试通过；Windows 真机仍未验收。
 - Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
 
 开发验证：
@@ -280,7 +281,7 @@ bun run vendor:verify
 bun scripts/verify-package.mjs  # 打包、解包并重跑包内测试、语法和哈希检查
 ```
 
-要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。CI 配置在 Ubuntu 上覆盖 Bun 1.4.2 / 1.4.4，另在 Windows 上检查同一包和 vendor；v0.6.2 的提交已在 Linux 与 Windows 全部通过。包内保留测试文件，测试使用临时目录与合成凭证。
+要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。CI 配置在 Ubuntu 上覆盖 Bun 1.4.2 / 1.4.4，另在 Windows 上检查同一包和 vendor；v0.6.2 的提交已在 Linux 与 Windows 全部通过；v0.6.3 的 CI 结果以本次 Release 为准。包内保留测试文件，测试使用临时目录与合成凭证。
 
 开发时可用隔离的 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 测试安装与元数据加载，并把 `MAGPIE_KIMI_DATA_HOME` 指向绝对路径。Windows 还必须将 `APPDATA` 指向隔离目录。Agent 定义仍声明正常的用户目录，因此测试实例不要在真实 Magpie 中打开接入开关、同步资源库或执行首次准备；完整界面测试使用独立系统用户。日常使用不要设置这些测试变量。
 
