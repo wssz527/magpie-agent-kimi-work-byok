@@ -1,9 +1,27 @@
 import fs from 'node:fs';
-import { lookup } from 'node:dns/promises';
+import { Resolver } from 'node:dns/promises';
 import { BYOK_DOMAIN, nativePrivateAddress } from './native-dns.mjs';
 
+// A plain `lookup()` leaves a GetAddrInfoReqWrap behind when the answer never
+// arrives; that handle keeps the process alive, so a panel or serve stopped
+// with SIGINT would hang. A Resolver can be cancelled, which releases it.
+async function resolveAddress(domain, timeoutMs) {
+  const resolver = new Resolver({ timeout: timeoutMs, tries: 1 });
+  let timer;
+  try {
+    const addresses = await Promise.race([
+      resolver.resolve4(domain),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error('dns_timeout')), timeoutMs); }),
+    ]);
+    return addresses[0];
+  } finally {
+    clearTimeout(timer);
+    try { resolver.cancel(); } catch {}
+  }
+}
+
 export class NativeSetupProbe {
-  constructor({ flagFile, lookupFn = lookup, timeoutMs = 1500, cacheMs = 60000 } = {}) {
+  constructor({ flagFile, lookupFn, timeoutMs = 1500, cacheMs = 60000 } = {}) {
     Object.assign(this, { flagFile, lookupFn, timeoutMs, cacheMs });
   }
 
@@ -13,11 +31,13 @@ export class NativeSetupProbe {
     this.pending = (async () => {
       let timer;
       try {
-        const result = await Promise.race([
-          this.lookupFn(BYOK_DOMAIN),
-          new Promise((_, reject) => { timer = setTimeout(() => reject(Error('dns_timeout')), this.timeoutMs); }),
-        ]);
-        return { passed: nativePrivateAddress(result.address), address: result.address };
+        const address = this.lookupFn
+          ? (await Promise.race([
+            Promise.resolve(this.lookupFn(BYOK_DOMAIN)).then(result => result.address),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(Error('dns_timeout')), this.timeoutMs); }),
+          ]))
+          : await resolveAddress(BYOK_DOMAIN, this.timeoutMs);
+        return { passed: nativePrivateAddress(address), address };
       } catch { return { passed: false, error: 'dns_unavailable' }; }
       finally { clearTimeout(timer); }
     })();

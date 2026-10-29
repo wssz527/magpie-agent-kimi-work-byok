@@ -2,7 +2,7 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.5.2 优先按实际结构兼容 Kimi，不再用版本号或来源哈希白名单拦截。** 子代理适配会检查实际配置、创建、运行和档案接点；结构保持兼容时，Kimi 升级后可重新准备本地副本，无需跟着升级插件。BYOK 核心接入已有 macOS Kimi 3.2.21 的实测记录，Windows 有分支测试和 CI；真实 UAC、真实 hosts 修改与登录后的完整 Work 流程仍未联合验收，Linux 未适配。`compat` 的源码标记只是文本观察，未观察到时不代表运行时能力缺失。
+**v0.5.3 优先按实际结构兼容 Kimi，不再用版本号或来源哈希白名单拦截。** 子代理适配会检查实际配置、创建、运行和档案接点；结构保持兼容时，Kimi 升级后可重新准备本地副本，无需跟着升级插件。BYOK 核心接入已有 macOS Kimi 3.2.21 的实测记录，Windows 有分支测试和 CI；真实 UAC、真实 hosts 修改与登录后的完整 Work 流程仍未联合验收，Linux 未适配。`compat` 的源码标记只是文本观察，未观察到时不代表运行时能力缺失。
 
 原生 BYOK 接入不修改 Magpie 或 Kimi 的安装目录、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里。
 
@@ -248,7 +248,7 @@ SETUP_AT=$(($(date +%s) * 1000))
 - 已在本机 Magpie 0.1.1692 停用旧本地插件并启用本版，宿主报告 6 个模型兼容检查通过、GLM-5.3 Flash/high 子代理目标已保存。已通过本插件准备真实 Kimi 3.2.21 的运行时副本；Kimi 运行时的启动检查返回 `waiting-kimi-exit`，未结束用户进程。真实桌面从适配入口启动后的完整调用链仍需单独验收；保存目标和准备成功本身不表示已接管。
 - **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
 - 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。该文件同时记录 `index.mjs` 是 allowlist 投影、其原始来源 SHA-256、核心版本与来源提交。
-- **v0.5.2 本地验证**：以核心 `ecf5e2d2…`（网关 0.6.2）执行 `vendor:sync` 后，`vendor:verify`、`bun run check` 与双 Bun 的 `bun test` 通过；核心分发包含结构适配器（版本与摘要只作完整性校验）和更新管理器，更新检查依次尝试本机 git、仓库静态发行 feed、最后才是 GitHub API，前两条都不消耗任何人的配额。这些验证不包含 Windows 真机，也没有调用付费模型。
+- **v0.5.3 本地验证**：以核心 `cba26b01…`（网关 0.6.3）执行 `vendor:sync` 后，`vendor:verify`、`bun run check` 与双 Bun 的 `bun test` 通过；核心分发包含结构适配器（版本与摘要只作完整性校验）和更新管理器，更新检查依次尝试本机 git、仓库静态发行 feed、最后才是 GitHub API，前两条都不消耗任何人的配额。这些验证不包含 Windows 真机，也没有调用付费模型。
 - Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
 
 开发验证：
