@@ -525,6 +525,10 @@ test('the plugin guards inference while a native subagent policy is still being 
     fs.writeFileSync(path.join(home, 'config.toml'),
       'default_model = "byok-kth-resp/' + ids[0] + '"\n'
       + [ids[0], ids[1]].map(id => '[models."byok-kth-resp/' + id + '"]\nprovider = "synthetic"\nmodel = "' + id + '"\n').join(''));
+    // CI has no Kimi installation; a synthetic contract keeps this test about
+    // the guard ordering instead of the local app version.
+    f.adapter.subagents.native.inspectContract = () => ({ state: 'source-compatible', version: 'synthetic' });
+    f.adapter.subagents.native.compatibility = undefined; f.adapter.subagents.native.probeAfter = 0;
     await f.adapter.tick();
     f.adapter.options.workModels = { subagents: { mode: 'pool', transport: 'native-config', model: ids[0],
       models: [{ id: ids[0], description: 'Default' }, { id: ids[1], description: 'Review' }] } };
