@@ -280,7 +280,7 @@ bun run vendor:verify
 bun scripts/verify-package.mjs  # 打包、解包并重跑包内测试、语法和哈希检查
 ```
 
-要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。CI 配置在 Ubuntu 上覆盖 Bun 1.4.2 / 1.4.4，另在 Windows 上检查同一包和 vendor；本次修改仍需实际运行 CI 才能取得 Windows 结果。包内保留测试文件，测试使用临时目录与合成凭证。
+要求 Bun 1.4.2+，由 Magpie 管理和运行，无需单独常驻 Bun。CI 配置在 Ubuntu 上覆盖 Bun 1.4.2 / 1.4.4，另在 Windows 上检查同一包和 vendor；v0.6.2 的提交已在 Linux 与 Windows 全部通过。包内保留测试文件，测试使用临时目录与合成凭证。
 
 开发时可用隔离的 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 测试安装与元数据加载，并把 `MAGPIE_KIMI_DATA_HOME` 指向绝对路径。Windows 还必须将 `APPDATA` 指向隔离目录。Agent 定义仍声明正常的用户目录，因此测试实例不要在真实 Magpie 中打开接入开关、同步资源库或执行首次准备；完整界面测试使用独立系统用户。日常使用不要设置这些测试变量。
 
