@@ -2,15 +2,15 @@
 
 让普通 **Kimi 桌面应用的 Work** 在原生模型选择器里使用 Magpie 的第三方模型。不是 Kimi Code，也不是把 Kimi 会员额度提供给其他 Agent 的 Provider。
 
-**v0.5.3 优先按实际结构兼容 Kimi，不再用版本号或来源哈希白名单拦截。** 子代理适配会检查实际配置、创建、运行和档案接点；结构保持兼容时，Kimi 升级后可重新准备本地副本，无需跟着升级插件。BYOK 核心接入已有 macOS Kimi 3.2.21 的实测记录，Windows 有分支测试和 CI；真实 UAC、真实 hosts 修改与登录后的完整 Work 流程仍未联合验收，Linux 未适配。`compat` 的源码标记只是文本观察，未观察到时不代表运行时能力缺失。
+**v0.5.4 优先按实际结构与运行契约兼容 Kimi，不再用版本号或来源哈希白名单拦截。** 子代理适配会检查实际配置、创建、运行和档案接点；结构保持兼容且桌面应用允许加载副本时，Kimi 升级后可重新准备本地副本，无需跟着升级插件。BYOK 核心接入已有 macOS Kimi 3.2.21 的实测记录，Windows 有分支测试和 CI；真实 UAC、真实 hosts 修改与登录后的完整 Work 流程仍未联合验收，Linux 未适配。`compat` 的源码标记只是文本观察，未观察到时不代表运行时能力缺失。
 
 原生 BYOK 接入不修改 Magpie 或 Kimi 的安装目录、`app.asar`、可执行文件或签名，不开调试端口、不注入模型菜单。HTTP 转发和单域名 DNS 都运行在 Magpie 的 Bun 插件宿主里。
 
-新增的**可选原生子代理模型控制**会从本机 Kimi 生成一份运行时副本，在副本中适配策略读取，并通过 `DAIMON_BUNDLE_DIR` 启动 Kimi。适配以实际结构接点为准，不再要求固定的 Kimi 版本号或来源哈希；结构不匹配时只禁用这条适配路径，并明确报告原因。主模型仍由 Work 菜单选择。本插件复用 Magpie 原生 Agent 选择器、模型目录、凭证、路由和用量。独立网关从 v0.3.0 起提供 `panel --config gateway.json` 本机 Web 控制面板；Magpie 用户直接在本插件中切换，不需要另开网关或面板。
+**可选原生子代理模型控制**依赖桌面应用允许通过 `DAIMON_BUNDLE_DIR` 加载本地适配副本。已确认当前正式版 Kimi 3.2.21 忽略该变量，本版明确报告 `unsupported / packaged_bundle_override_disabled`，不把准备成功或等待启动当作已接管。主模型 BYOK 不依赖此能力；主模型仍由 Work 菜单选择。本插件复用 Magpie 原生 Agent 选择器、模型目录、凭证、路由和用量。独立网关从 v0.3.0 起提供 `panel --config gateway.json` 本机 Web 控制面板；独立版的思考翻译入口不包含在本插件内，插件不需要另开网关或面板。
 
 ## 与通用核心的关系
 
-本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。当前嵌入核心为 **0.6.0**（`be9e0024740d513a5e8ee1556435472e55828a52`）。
+本插件的接入能力来自独立仓库 [`kimi-work-gateway`](https://github.com/wssz527/kimi-work-gateway)，该仓库同时提供可直接运行的独立 CLI。Magpie 版把核心的固定版本复制到 `vendor/kimi-work-gateway/`，**用户不需要另装或另开网关**。当前嵌入核心为 **0.6.4**；准确来源提交与逐文件 SHA-256 见 `vendor/VENDOR.json`。
 
 | 位置 | 作用 |
 | --- | --- |
@@ -78,7 +78,7 @@ magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
 magpie plugin update magpie-agent-kimi-work-byok
 ```
 
-`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.4.2`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
+`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.5.4`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
 
 插件更新会重启 Magpie 的插件宿主，正在流式返回的回答会先完成。更新不会改动 Kimi 的安装目录、原有接入设置或 `~/.config/magpie-kimi/` 里的状态；更新后仍需在 Kimi 的「第三方模型网关」里确认导入结果。
 
@@ -158,7 +158,7 @@ $REQUEST_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 & $MAGPIE plugin options magpie-agent-kimi-work-byok "{`"subagentRequest`":{`"action`":`"prepare`",`"id`":`"subagents-prepare-$REQUEST_AT`",`"at`":$REQUEST_AT}}"
 ```
 
-在 `status.json` 中确认 `subagents.operation.state` 为 `prepared`，或启动时由当前结构自动准备。准备只复制本机运行时到 `~/.config/magpie-kimi/native-runtime/`，不启动或结束 Kimi，不需要修改安装目录。副本不随插件分发。
+若启动能力检查通过，`subagents.operation.state` 会显示 `prepared`；启动时也可由当前结构自动准备。当前正式版 Kimi 3.2.21 会返回 `failed / subagent_launch_unsupported`，此时应跳过本节的准备与启动步骤，保留主模型 BYOK 或继承模式，不要继续等待 `prepared`。准备只复制本机运行时到 `~/.config/magpie-kimi/native-runtime/`，不启动或结束 Kimi，不需要修改安装目录。副本不随插件分发。
 
 让 Work 任务结束，**正常退出 Kimi**，再提交新启动请求。macOS：
 
@@ -193,11 +193,15 @@ $REQUEST_AT = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 | `runtime.state: policy-unavailable` | 副本仍运行，但策略丢失或无法读取；主会话保持可用，子代理被阻止 |
 | `runtime.state: heartbeat-stale` | 匹配进程仍在，心跳尚未更新；先观察运行状态，不代表需要重新启动 |
 | `runtime.state: unavailable` | 找不到原安装或运行时来源，`reason` 给出原因 |
+| `runtime.state: unsupported` | 正式应用不允许加载适配副本；当前正式版 Kimi 的 `reason` 为 `packaged_bundle_override_disabled`，跳过准备与启动 |
+| `runtime.state: scope-conflict` | 实际内核作用域与策略不匹配，拒绝沿用该策略 |
 | `runtime.state: outdated` / `conflict` | 来源已变化、更新版本正在准备或副本/状态文件冲突；先检查原因。从适配入口启动时会尝试按当前结构重新准备，失败则明确报告 |
 
 切换目标后，对后续新建的普通原生子代理生效；已经运行的子代理不会被换模型。`fork` 必须继承父模型，强制模式下会明确拒绝，改用普通新建子代理。恢复旧子代理时，保存的模型与强制目标不一致也会拒绝，避免改写旧上下文；一致时允许恢复。关闭接入或插件正常退出会按文件归属恢复 `inherit`，旧宿主不会覆盖新宿主的策略。下次从 Kimi 普通入口启动即可不使用副本。
 
-当前适配按**实际结构接点**判断：配置读取、子代理创建、运行入口和模型档案服务都要唯一匹配。版本号和内核摘要只用于展示与副本完整性校验，不再作为许可门槛；Kimi 升级后若这些接点仍然存在，重新准备即可继续使用，无需等待插件发版。接点缺失或有多个候选时会拒绝准备并给出原因，不会猜测或强行改写。它不是 Kimi 或 Magpie 的官方稳定子代理 API。**Windows 真机的完整调用链仍未验收**。
+当前适配按**实际结构接点与启动契约**判断：配置读取、依赖注入、子代理创建/恢复、运行入口和模型档案服务都要唯一匹配，并通过行为探针与生成代码语法检查。版本号和内核摘要只用于展示与副本完整性校验，不再作为许可门槛；Kimi 升级后若这些接点仍然存在，且正式应用允许加载副本，重新准备即可继续使用，无需等待插件发版。接点缺失或有多个候选时会拒绝准备并给出原因，不会猜测或强行改写。它不是 Kimi 或 Magpie 的官方稳定子代理 API。
+
+`runtime.state: unsupported` 的 `reason` 给出启动能力缺失原因；当前正式版 Kimi 3.2.21 为 `packaged_bundle_override_disabled`，严格强制模式无法从该入口生效。`scope-conflict` 表示实际内核作用域与策略不匹配。不会自动改写用户 TOML 来放松 fork/resume 约束。主模型 BYOK 不受此限制。**Windows 真机的完整调用链仍未验收**。
 
 `compat` 的 `runtime source markers` 是源码文本观察结果：标记为 `not-observed` 可能是因为混淆隐藏了字符串，不等于该能力在运行时缺失，因此不会单独把状态判成 `incompatible`。
 
@@ -238,17 +242,17 @@ SETUP_AT=$(($(date +%s) * 1000))
 
 沿用上游 Agent 的资源库接口：共享指令在推理时合并；MCP 和技能使用普通 Kimi 的本地资源目录。已有文件和冲突项按 Magpie 的资源库规则处理，不会自动启用全部资源。Kimi 自带的搜索、文件等工具仍由 Kimi 执行。
 
-插件状态在 `~/.config/magpie-kimi/`。`connection.json` 含 Agent 网关凭证，不要上传。Kimi 的账号、原生 profile、运行状态以及 Magpie 的账号配置均不属于分发包。升级前如果使用过旧版配置备份，备份可能含凭证，同样不要上传。
+插件状态在 `~/.config/magpie-kimi/`。`connection.json` 含 Agent 网关凭证，不要上传。Kimi 的账号、原生 profile、运行状态以及 Magpie 的账号配置均不属于分发包。升级前如果使用过旧版配置备份，备份可能含凭证，同样不要上传。移除插件不会自动删除该状态目录或其中的 `native-runtime/` 适配副本；确认不再需要后手动删除，Kimi 普通入口不使用该副本。
 
 ## 验证范围
 
 - 历史核心接入记录：macOS、Kimi 3.2.21、Magpie 0.1.1659、Bun 1.4.4 下，6 个模型导入且真实推理 HTTP 200。该记录不替代当前源码和分发包的回归验证。
 - 当前测试检查生成的目录、两种协议转发、目录变更、兼容缓存、实际插件入口加载、子代理选择保存、目标撤销、一次性操作去重及断开恢复。入口用例在隔离数据和模拟 Magpie 上游上运行；macOS 安装了 Kimi 时额外调用其真实解析器。
-- 核心的原生验收用 Node 24 加载本地生成副本中的真实 Work adapter 与内核，经网关访问本地模拟上游，验证父 A → 子 B → 父 A、跨协议、推理档位、配置重建、关闭以及 fork/resume 冲突。未调用付费模型。没有安装受支持 Kimi 或 Node 24 的环境会跳过此项；普通 CI 不代替真实内核验收。
-- 已在本机 Magpie 0.1.1692 停用旧本地插件并启用本版，宿主报告 6 个模型兼容检查通过、GLM-5.3 Flash/high 子代理目标已保存。已通过本插件准备真实 Kimi 3.2.21 的运行时副本；Kimi 运行时的启动检查返回 `waiting-kimi-exit`，未结束用户进程。真实桌面从适配入口启动后的完整调用链仍需单独验收；保存目标和准备成功本身不表示已接管。
+- 核心内核验收用 Node 24 **直接导入**本地适配副本中的真实 adapter 与内核，经本地模拟上游验证 12 个绑定、跨协议、effort、配置重建和 fork/resume 场景。夹具显式绕过桌面启动探针，因此只能证明内核适配，不能证明正式 App 加载副本；未调用付费推理。
+- 早期本机记录曾确认模型目录、GLM 目标保存和副本生成。本轮进一步确认正式版 Kimi 3.2.21 忽略副本环境变量；旧 `waiting-launch` 不能解释成接管。新版按实际能力报告不支持，主模型导入继续独立工作。
 - **Windows 未做真机端到端验收。** 核心仓库新增了临时 hosts 文件上的 PowerShell 执行用例，当前 macOS 环境会跳过。真实 UAC、Kimi 导入和 `clip.exe` 仍需 Windows 验证；不能以旧版 CI 或脚本字符串断言代替。
 - 核心通过 `vendor/VENDOR.json` 固定文件集合与哈希，换行归一化后校验，避免 Windows CRLF 检出误报。该文件同时记录 `index.mjs` 是 allowlist 投影、其原始来源 SHA-256、核心版本与来源提交。
-- **v0.5.3 本地验证**：以核心 `cba26b01…`（网关 0.6.3）执行 `vendor:sync` 后，`vendor:verify`、`bun run check` 与双 Bun 的 `bun test` 通过；核心分发包含结构适配器（版本与摘要只作完整性校验）和更新管理器，更新检查依次尝试本机 git、仓库静态发行 feed、最后才是 GitHub API，前两条都不消耗任何人的配额。这些验证不包含 Windows 真机，也没有调用付费模型。
+- **v0.5.4 验证**：重配置改为串行执行；配置未变且监听正常时直接复用，实际切换期间才暂时断开上游；监听失败恢复真实旧端口、旧凭证与旧上游，并保留随机端口配置语义。最终测试数量、分发包和 CI 结果以本次 Release 说明为准，不沿用旧版结果；不包含 Windows 真机，也没有调用付费模型。
 - Kimi 后续版本的格式与检查条件可能变化，`compat` 的未知状态不代表验证成功。
 
 开发验证：

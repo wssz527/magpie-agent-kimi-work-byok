@@ -35,7 +35,7 @@ test('the embedded core records the translation config its config.mjs imports', 
 
 test('the vendored index is an allowlist projection that keeps its source hash', () => {
   const { record } = verifyCore();
-  expect(record.version).toBe('0.6.3');
+  expect(record.version).toBe('0.6.4');
   expect(record.commit).toMatch(/^[0-9a-f]{40}$/);
   const projection = record.projection['index.mjs'];
   expect(projection.mode).toBe(INDEX_PROJECTION);
@@ -85,6 +85,12 @@ test('copying a core writes the same bytes it records and verifies without the s
     expect(fs.readFileSync(path.join(vendor, 'core', 'index.mjs'), 'utf8')).toBe("export { KimiWorkGateway } from './gateway.mjs';\n");
     fs.rmSync(core, { recursive: true, force: true });
     expect(verifyCore(path.join(vendor, 'core'), manifest).ok).toBe(true);
+    const file = path.join(vendor, 'core', 'subagent-runtime.mjs');
+    fs.appendFileSync(file, '\nimport "./forgotten-dependency.mjs";\n');
+    const updated = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+    updated.files['subagent-runtime.mjs'] = digestText(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(manifest, JSON.stringify(updated));
+    expect(verifyCore(path.join(vendor, 'core'), manifest).problems).toContain('subagent-runtime.mjs has unvendored dependency ./forgotten-dependency.mjs');
   } finally {
     fs.rmSync(core, { recursive: true, force: true });
     fs.rmSync(vendor, { recursive: true, force: true });

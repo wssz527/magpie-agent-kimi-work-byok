@@ -104,16 +104,18 @@ export class LocalKimiAdapter extends KimiAdapter {
         this.nativeCatalogAfter = Date.now() + 10000;
       }
       const setup = await this.nativeProbe.check();
-      let imported = false;
+      const models = this.nativeGateway.models;
+      const requiredProviders = [...new Set(models.map(model => model.protocol === 'chat' ? 'byok-kth-kimi' : 'byok-kth-resp'))];
+      let missingProviders = requiredProviders;
       try {
         const providers = read(this.configFile).model?.providers || {};
-        imported = ['byok-kth-kimi', 'byok-kth-resp'].some(id => providers[id]?.baseUrl?.replace(/\/$/, '') === url);
+        missingProviders = requiredProviders.filter(id => providers[id]?.baseUrl?.replace(/\/$/, '') !== url);
       } catch {}
+      const imported = requiredProviders.length > 0 && missingProviders.length === 0;
       const code = !setup.intranet.passed ? 'native_byok_waiting_intranet'
         : !setup.revealed ? 'native_byok_waiting_setup'
           : !imported ? 'native_byok_waiting_import'
             : runner?.lifecycleStatus !== 'running' ? 'waiting_kimi' : 'native_byok_ready';
-      const models = this.nativeGateway.models;
       const compatKey = JSON.stringify([(this.options.contractFingerprint || contractFingerprint)(), models]);
       if (!this.compat || this.compat.key !== compatKey || Date.now() - this.compat.at > 60000) {
         let value;
@@ -123,7 +125,7 @@ export class LocalKimiAdapter extends KimiAdapter {
       }
       this.report(code, {
         mode: 'native-byok', gatewayReady: true, url, models: models.length,
-        setup: { ...setup, imported }, dnsListening: Boolean(this.nativeDNS.socket),
+        setup: { ...setup, imported, missingProviders }, dnsListening: Boolean(this.nativeDNS.socket),
         subagents: await this.subagents.update(desired.subagents, models, this.options.subagentRequest),
         compat: { state: this.compat.value.state, version: this.compat.value.version ?? null,
           scope: 'active-models', modelCount: models.length,

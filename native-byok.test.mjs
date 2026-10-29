@@ -196,6 +196,106 @@ test('upstream rate limits and authentication failures preserve status, body and
   } finally { await f.cleanup(); }
 });
 
+test('connection changes wait for an in-flight catalog and never repoint its inference', async () => {
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const catalogStarted = new Promise(resolve => { started = resolve; });
+  let hold = true;
+  const f = await fixture({ fetchImpl: async (url, options) => {
+    if (hold && url.endsWith('/models')) { started(); await gate; }
+    return fetch(url, options);
+  } });
+  try {
+    const pending = request(f, '/responses', { model: ids[0], input: 'synthetic' });
+    await catalogStarted;
+    await expect(f.adapter.configure({ url: 'http://127.0.0.1:31002/v1', key: 'synthetic-new-key', port: 0 }))
+      .rejects.toThrow('waiting_kimi_idle');
+    expect(f.adapter.backend.connection).toEqual({ target: f.url, key });
+    expect(f.adapter.connection.key).toBe(key);
+    hold = false; release();
+    const response = await pending;
+    expect(response.status).toBe(200); await response.text();
+    expect(f.requests).toHaveLength(1);
+    expect(f.requests[0].headers.authorization).toBe('Bearer ' + key);
+    await f.adapter.configure({ url: 'http://127.0.0.1:31002/v1', key: 'synthetic-new-key', port: 0 });
+    expect(f.adapter.backend.connection.target).toBe('http://127.0.0.1:31002/v1');
+  } finally { release(); await f.cleanup(); }
+});
+
+test('invalid local connection settings leave the upstream connection unchanged', async () => {
+  const f = await fixture();
+  try {
+    await expect(f.adapter.configure({ url: 'http://127.0.0.1:31002/v1', key: '', port: 0 }))
+      .rejects.toThrow('invalid_connection');
+    expect(f.adapter.backend.connection).toEqual({ target: f.url, key });
+    expect(f.adapter.connection.key).toBe(key);
+  } finally { await f.cleanup(); }
+});
+
+test('identical connection settings reuse the live listener without disconnecting the upstream', async () => {
+  const f = await fixture();
+  let configureCalls = 0;
+  let disconnectCalls = 0;
+  f.adapter.gateway.configure = async () => { configureCalls += 1; throw Error('must_not_reconfigure'); };
+  const disconnect = f.adapter.backend.disconnect.bind(f.adapter.backend);
+  f.adapter.backend.disconnect = () => { disconnectCalls += 1; disconnect(); };
+  try {
+    expect(await f.adapter.configure({ url: f.url, key, port: 0 })).toBe(f.adapter.url);
+    const response = await request(f, '/responses', { model: ids[0], input: 'synthetic unchanged configuration' });
+    expect(response.status).toBe(200); await response.text();
+    expect(configureCalls).toBe(0);
+    expect(disconnectCalls).toBe(0);
+    expect(f.adapter.backend.connection).toEqual({ target: f.url, key });
+  } finally { await f.cleanup(); }
+});
+
+test('failed listener replacement restores the old ephemeral port, credentials and upstream', async () => {
+  const f = await fixture();
+  const blocker = http.createServer();
+  await new Promise(resolve => blocker.listen(0, '127.0.0.1', resolve));
+  const oldURL = f.adapter.url;
+  const oldPort = f.adapter.port;
+  try {
+    await expect(f.adapter.configure({ url: f.url, key: 'synthetic-new-key', port: blocker.address().port }))
+      .rejects.toThrow('native_byok_port_unavailable');
+    expect(f.adapter.url).toBe(oldURL);
+    expect(f.adapter.port).toBe(oldPort);
+    expect(f.adapter.connection.key).toBe(key);
+    expect(f.adapter.backend.connection).toEqual({ target: f.url, key });
+    const response = await request(f, '/responses', { model: ids[0], input: 'synthetic after rollback' });
+    expect(response.status).toBe(200); await response.text();
+    expect(f.requests).toHaveLength(1);
+    expect(f.requests[0].headers.authorization).toBe('Bearer ' + key);
+  } finally { await close(blocker); await f.cleanup(); }
+});
+
+test('connection changes are serialized while a new listener is being configured', async () => {
+  const f = await fixture();
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const firstStarted = new Promise(resolve => { started = resolve; });
+  const configure = f.adapter.gateway.configure.bind(f.adapter.gateway);
+  const calls = [];
+  f.adapter.gateway.configure = async options => {
+    calls.push(options.key);
+    if (options.key === 'synthetic-first-key') { started(); await gate; }
+    return configure(options);
+  };
+  try {
+    const first = f.adapter.configure({ url: 'http://127.0.0.1:31002/v1', key: 'synthetic-first-key', port: 0 });
+    await firstStarted;
+    const second = f.adapter.configure({ url: 'http://127.0.0.1:31003/v1', key: 'synthetic-second-key', port: 0 });
+    await Bun.sleep(20);
+    expect(calls).toEqual(['synthetic-first-key']);
+    expect(f.adapter.backend.connection).toBeNull();
+    release();
+    await Promise.all([first, second]);
+    expect(calls).toEqual(['synthetic-first-key', 'synthetic-second-key']);
+    expect(f.adapter.backend.connection).toEqual({ target: 'http://127.0.0.1:31003/v1', key: 'synthetic-second-key' });
+    expect(f.adapter.connection.key).toBe('synthetic-second-key');
+  } finally { release(); await f.cleanup(); }
+});
+
 test('cancelling a native streamed turn cancels the upstream connection', async () => {
   const f = await fixture();
   try {
@@ -336,6 +436,19 @@ test('native configured readiness requires import and a running Work runtime, no
     await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_waiting_import');
     const doc=read(f.adapter.configFile);
     doc.model.providers['byok-kth-resp']={type:'openai_responses',baseUrl:f.adapter.nativeGateway.url};
+    write(f.adapter.configFile,doc);await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_waiting_import');
+    expect(f.adapter.status.setup.missingProviders).toEqual(['byok-kth-kimi']);
+    doc.model.providers['byok-kth-kimi']={type:'kimi',baseUrl:f.url};
+    write(f.adapter.configFile,doc);
+    const wrongImport=fs.readFileSync(f.adapter.configFile);
+    await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_waiting_import');
+    expect(f.adapter.status.setup.missingProviders).toEqual(['byok-kth-kimi']);
+    expect(fs.readFileSync(f.adapter.configFile).equals(wrongImport)).toBe(true);
+    doc.model.providers['byok-kth-kimi'].baseUrl=f.adapter.nativeGateway.url;
+    write(f.adapter.configFile,doc);await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_ready');
+    expect(f.adapter.status.setup.missingProviders).toEqual([]);
+    delete doc.model.providers['byok-kth-kimi'];
+    f.data.splice(f.data.findIndex(row=>row.id===ids[3]),1);f.adapter.nativeCatalogAfter=0;
     write(f.adapter.configFile,doc);await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_ready');
     write(f.adapter.runnerFile,{lifecycleStatus:'stopped'});await f.adapter.tick();expect(f.adapter.status.code).toBe('waiting_kimi');
     expect(f.requests).toHaveLength(0);

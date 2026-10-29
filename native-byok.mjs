@@ -15,6 +15,7 @@ export class NativeByokGateway {
     this.backend = new MagpieBackend({ fetchImpl, catalogTimeoutMs });
     this.gateway = new KimiWorkGateway({ backend: this.backend, instructionsFile, timeoutMs, catalogTimeoutMs, fetchImpl });
     this.instructionsFile = instructionsFile;
+    this.reconfiguration = Promise.resolve();
   }
 
   get server() { return this.gateway.server; }
@@ -27,8 +28,48 @@ export class NativeByokGateway {
   get port() { return this.gateway.port; }
 
   configure({ url, key, port = 3426 }) {
-    this.backend.configure({ url: validateGateway(url), key });
-    return this.gateway.configure({ key, port });
+    const target = validateGateway(url);
+    const operation = this.reconfiguration.then(() => this.reconfigure(target, key, port));
+    this.reconfiguration = operation.catch(() => {});
+    return operation;
+  }
+
+  async reconfigure(target, key, port) {
+    const active = this.backend.connection;
+    if (active?.target === target && active.key === key && this.connection?.key === key
+      && this.port === port && this.server?.listening) return this.url;
+    if (this.inflight.size && (active?.target !== target || active?.key !== key || this.port !== port)) {
+      throw Error('waiting_kimi_idle');
+    }
+    const previous = {
+      backend: active,
+      local: this.connection ? { ...this.connection } : null,
+      port: this.server?.address()?.port,
+      requestedPort: this.port,
+      models: this.models,
+    };
+    this.backend.disconnect();
+    try {
+      const local = await this.gateway.configure({ key, port });
+      this.backend.configure({ url: target, key });
+      return local;
+    } catch (failure) {
+      this.backend.disconnect();
+      try {
+        if (previous.local && previous.port != null) {
+          await this.gateway.configure({ key: previous.local.key, port: previous.port });
+          this.gateway.port = previous.requestedPort;
+          this.gateway.models = previous.models;
+          if (previous.backend) this.backend.configure({ url: previous.backend.target, key: previous.backend.key });
+        } else {
+          await this.gateway.stop();
+        }
+      } catch {
+        this.backend.disconnect();
+        await this.gateway.stop().catch(() => {});
+      }
+      throw failure;
+    }
   }
 
   async catalog(signal) {
@@ -39,6 +80,7 @@ export class NativeByokGateway {
   }
 
   async stop() {
+    await this.reconfiguration;
     this.backend.disconnect();
     await this.gateway.stop();
   }

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -7,6 +8,8 @@ import { archiveCandidates, installedVersion } from './kimi-contract.mjs';
 import { SUBAGENT_POLICY_FILE, readSubagentJSON, writeSubagentJSON } from './subagent-policy.mjs';
 import { SUBAGENT_HOOK_VERSION } from './subagent-hook.mjs';
 import { applySubagentStructure, probeSubagentKernel, SUBAGENT_ADAPTER_VERSION } from './subagent-structure.mjs';
+import { inspectSubagentLaunchContract } from './subagent-launch-contract.mjs';
+import { reservedEnvName } from './translation-config.mjs';
 
 const KERNEL = 'app/daimon/dist/kimi-code-v2/kernel-bundle.mjs';
 const HOOK = 'kwg-subagent-hook.mjs';
@@ -24,7 +27,22 @@ export function transformSubagentKernel(source, options) {
   return applySubagentStructure(source, options, HOOK);
 }
 
-export function findSubagentInstallation({ archive, bundleDir, application, platform = process.platform, env = process.env } = {}) {
+function validateSyntax(source) {
+  if (globalThis.Bun?.Transpiler) {
+    try { new globalThis.Bun.Transpiler({ loader: 'js' }).scan(source); return; }
+    catch { throw Error('subagent_runtime_incompatible'); }
+  }
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kwg-syntax-'));
+  try {
+    const file = path.join(directory, 'kernel.mjs');
+    fs.writeFileSync(file, source, { mode: 0o600 });
+    const result = spawnSync(process.execPath, ['--check', file], { timeout: 10000, maxBuffer: 1024 * 1024 });
+    if (result.error || result.status !== 0) throw Error('subagent_runtime_incompatible');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
+
+export function findSubagentInstallation({ archive, bundleDir, application, platform = process.platform, env = process.env,
+  requireBundle = true } = {}) {
   const archivePath = archive || archiveCandidates({ platform, env }).find(file => fs.existsSync(file));
   if (!archivePath || !fs.existsSync(archivePath)) throw Error('subagent_kimi_unavailable');
   const resources = path.dirname(archivePath);
@@ -32,12 +50,12 @@ export function findSubagentInstallation({ archive, bundleDir, application, plat
   const bundle = candidates.find(directory => fs.existsSync(path.join(directory, KERNEL)));
   const tarball = [path.join(resources, 'resources', 'daimon-bundle.tar.gz'), path.join(resources, 'daimon-bundle.tar.gz')]
     .find(file => fs.existsSync(file));
-  if (!bundle && !tarball) throw Error('subagent_bundle_unavailable');
+  if (requireBundle && !bundle && !tarball) throw Error('subagent_bundle_unavailable');
   const executables = platform === 'darwin' ? [path.join(path.dirname(resources), 'MacOS', 'Kimi')]
     : [path.join(path.dirname(resources), 'Kimi.exe'), path.join(path.dirname(resources), 'kimi-desktop.exe')];
   const app = application || executables.find(file => fs.existsSync(file));
   return { archive: path.resolve(archivePath), version: installedVersion(archivePath),
-    ...(bundle ? { bundleDir: path.resolve(bundle) } : { tarball: path.resolve(tarball) }),
+    ...(bundle ? { bundleDir: path.resolve(bundle) } : tarball ? { tarball: path.resolve(tarball) } : {}),
     application: app ? path.resolve(app) : null, platform };
 }
 
@@ -79,19 +97,27 @@ const alive = pid => {
 };
 
 export class SubagentRuntime {
-  constructor({ stateDir, ...installation } = {}) {
+  constructor({ stateDir, launchProbe = inspectSubagentLaunchContract, ...installation } = {}) {
     if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) throw Error('invalid_subagent_state_dir');
     this.stateDir = stateDir;
     this.installationOptions = installation;
+    this.launchProbe = launchProbe;
     this.manifestFile = path.join(stateDir, 'subagent-runtime.json');
     this.policyPath = path.join(stateDir, SUBAGENT_POLICY_FILE);
     this.receiptPath = path.join(stateDir, 'subagent-runtime-status.json');
   }
 
-  installation() { return findSubagentInstallation(this.installationOptions); }
+  installation(options) { return findSubagentInstallation({ ...this.installationOptions, ...options }); }
+
+  launchCapability(installation) {
+    try { return this.launchProbe(installation.archive); }
+    catch { return { state: 'unverified', reason: 'bundle_override_probe_failed' }; }
+  }
 
   prepare() {
     const installation = this.installation();
+    const launch = this.launchCapability(installation);
+    if (launch.state !== 'supported') throw Error('subagent_launch_unsupported');
     fs.mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
     if (fs.lstatSync(this.stateDir).isSymbolicLink()) throw Error('subagent_file_conflict');
     const runtimeRoot = path.join(this.stateDir, 'native-runtime');
@@ -112,6 +138,7 @@ export class SubagentRuntime {
       const destination = path.join(runtimeRoot, runtimeId);
       const bundleDir = path.join(destination, 'bundle');
       const generated = transformSubagentKernel(source, { policyPath: this.policyPath, receiptPath: this.receiptPath, runtimeId, sourceHash });
+      validateSyntax(generated);
       let exists = false;
       try { fs.lstatSync(destination); exists = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (exists) {
@@ -147,14 +174,24 @@ export class SubagentRuntime {
   inspect({ runnerPid } = {}) {
     let manifest;
     try { manifest = readSubagentJSON(this.manifestFile); }
-    catch (error) { return { state: error.code === 'ENOENT' ? 'not-prepared' : 'conflict' }; }
+    catch (error) {
+      if (error.code !== 'ENOENT') return { state: 'conflict' };
+      try {
+        const installation = this.installation();
+        const capability = this.launchCapability(installation);
+        if (capability.state !== 'supported') return { state: 'unsupported', reason: capability.reason, version: installation.version };
+      } catch {}
+      return { state: 'not-prepared' };
+    }
     try {
       if (manifest.schemaVersion !== 1 || !/^[a-f0-9]{24}$/.test(manifest.runtimeId)
+        || !/^[a-f0-9]{64}$/.test(manifest.sourceHash) || !/^[a-f0-9]{64}$/.test(manifest.patchedHash)
         || manifest.bundleDir !== path.join(this.stateDir, 'native-runtime', manifest.runtimeId, 'bundle')
         || manifest.policyPath !== this.policyPath || manifest.receiptPath !== this.receiptPath
-        || manifest.hookVersion !== SUBAGENT_HOOK_VERSION
+        || !Number.isInteger(manifest.hookVersion)
         || ![manifest.sourceHash, manifest.patchedHash, manifest.hookHash].every(value => /^[a-f0-9]{64}$/.test(value))) throw Error();
-      if (manifest.adapterVersion !== undefined && manifest.adapterVersion !== SUBAGENT_ADAPTER_VERSION) return { state: 'outdated' };
+      if (manifest.adapterVersion !== undefined && manifest.adapterVersion !== SUBAGENT_ADAPTER_VERSION
+        || manifest.hookVersion !== SUBAGENT_HOOK_VERSION) return { state: 'outdated' };
       for (const directory of [this.stateDir, path.join(this.stateDir, 'native-runtime'), path.dirname(manifest.bundleDir), manifest.bundleDir]) {
         if (fs.lstatSync(directory).isSymbolicLink()) throw Error();
       }
@@ -166,6 +203,8 @@ export class SubagentRuntime {
         }
         throw error;
       }
+      const capability = this.launchCapability(installation);
+      if (capability.state !== 'supported') return { state: 'unsupported', reason: capability.reason, version: installation.version };
       if (installation.archive !== manifest.archive || installation.version !== manifest.version
         || installation.application !== manifest.application) return { state: 'outdated' };
       if (installation.bundleDir && hash(sourceText(path.join(installation.bundleDir, KERNEL))) !== manifest.sourceHash) return { state: 'outdated' };
@@ -185,6 +224,7 @@ export class SubagentRuntime {
         && receipt?.sourceHash === manifest.sourceHash && alive(receipt?.pid)
         && (runnerPid === undefined || receipt.pid === runnerPid);
       if (!observed) return { state: 'waiting-launch', ...result };
+      if (receipt.reason === 'subagent_scope_mismatch') return { state: 'scope-conflict', ...result, reason: receipt.reason };
       const age = Date.now() - receipt.at;
       if (!Number.isFinite(receipt.at) || age < 0 || age >= 15000) return { state: 'heartbeat-stale', ...result };
       if (!policy || policy.schemaVersion !== 1 || receipt.homeDir !== policy.homeDir) {
@@ -198,23 +238,38 @@ export class SubagentRuntime {
 
   launchContext() {
     let status = this.inspect();
+    if (status.state === 'unsupported') throw Error('subagent_launch_unsupported');
     if (['not-prepared', 'outdated'].includes(status.state)) {
       this.prepare();
       status = this.inspect();
     }
     if (!['loaded', 'pending-policy', 'waiting-launch'].includes(status.state)) throw Error('subagent_runtime_not_ready');
     const manifest = readSubagentJSON(this.manifestFile);
+    if (this.launchCapability(manifest).state !== 'supported') throw Error('subagent_launch_unsupported');
     if (!manifest.application || !fs.existsSync(manifest.application)) throw Error('subagent_kimi_unavailable');
-    const policy = readSubagentJSON(this.policyPath);
-    if (policy?.schemaVersion !== 1 || !['inherit', 'force'].includes(policy.mode)) throw Error('subagent_policy_unavailable');
+    let policy;
+    try { policy = readSubagentJSON(this.policyPath); } catch { throw Error('subagent_policy_unavailable'); }
+    if (policy?.schemaVersion !== 1 || typeof policy.homeDir !== 'string' || !path.isAbsolute(policy.homeDir)
+      || !['inherit', 'force'].includes(policy.mode)) throw Error('subagent_policy_unavailable');
     return manifest;
   }
 
-  async launch({ isRunning, spawnApp = spawn } = {}) {
+  async launchOriginal(options = {}) {
+    const installation = this.installation({ requireBundle: false });
+    if (!installation.application || !fs.existsSync(installation.application)) throw Error('subagent_kimi_unavailable');
+    return this.start(installation.application, undefined, options);
+  }
+
+  async launch(options = {}) {
     const manifest = this.launchContext();
+    const result = await this.start(manifest.application, manifest.bundleDir, options);
+    return result.state === 'starting' ? { ...result, runtimeId: manifest.runtimeId } : result;
+  }
+
+  async start(application, bundleDir, { isRunning, spawnApp = spawn, protectedEnvNames = [] } = {}) {
     let running = isRunning?.();
     if (running === undefined) {
-      const executable = path.basename(manifest.application).replace(/\.exe$/i, '');
+      const executable = path.basename(application).replace(/\.exe$/i, '');
       const probe = process.platform === 'win32'
         ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "if (Get-Process -Name '" + executable.replaceAll("'", "''") + "' -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"], { windowsHide: true, timeout: 10000 })
         : spawnSync('pgrep', ['-x', executable], { timeout: 10000 });
@@ -222,11 +277,14 @@ export class SubagentRuntime {
       running = probe.status === 0;
     }
     if (running) return { state: 'waiting-kimi-exit' };
-    const env = { ...process.env, DAIMON_BUNDLE_DIR: manifest.bundleDir };
+    const env = { ...process.env };
+    if (bundleDir) env.DAIMON_BUNDLE_DIR = bundleDir;
+    else delete env.DAIMON_BUNDLE_DIR;
+    for (const name of protectedEnvNames) if (typeof name === 'string' && !reservedEnvName(name)) delete env[name];
     delete env.ELECTRON_RUN_AS_NODE;
-    const child = spawnApp(manifest.application, [], { env, detached: true, stdio: 'ignore', windowsHide: false });
+    const child = spawnApp(application, [], { env, detached: true, stdio: 'ignore', windowsHide: false });
     await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
     child.unref();
-    return { state: 'starting', pid: child.pid, runtimeId: manifest.runtimeId };
+    return { state: 'starting', pid: child.pid };
   }
 }

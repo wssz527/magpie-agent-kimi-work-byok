@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const CORE_FILES = ['config.mjs', 'gateway.mjs', 'index.mjs', 'instructions.mjs', 'kimi-contract.mjs',
   'native-clipboard.mjs', 'native-dns.mjs', 'native-setup.mjs', 'native-status.mjs', 'openai-backend.mjs',
-  'paths.mjs', 'subagent-policy.mjs', 'subagent-hook.mjs', 'subagent-runtime.mjs', 'subagent-structure.mjs', 'translation-config.mjs', 'LICENSE'];
+  'paths.mjs', 'subagent-policy.mjs', 'subagent-hook.mjs', 'subagent-runtime.mjs', 'subagent-structure.mjs',
+  'subagent-launch-contract.mjs', 'translation-config.mjs', 'LICENSE'];
 
 export const INDEX_FILE = 'index.mjs';
 export const INDEX_PROJECTION = 'allowlist-reexports';
@@ -120,6 +121,15 @@ export function verifyCore(target = path.join(here, 'vendor', 'kimi-work-gateway
     try { actual = digestText(readText(path.join(target, name))); }
     catch { problems.push('missing ' + name); continue; }
     if (actual !== expected) problems.push('changed ' + name);
+  }
+  if (JSON.stringify(Object.keys(record.files).sort()) !== JSON.stringify([...CORE_FILES].sort())) problems.push('manifest file set mismatch');
+  for (const name of CORE_FILES.filter(file => file.endsWith('.mjs'))) {
+    let source;
+    try { source = readText(path.join(target, name)); } catch { continue; }
+    for (const match of source.matchAll(/^\s*(?:import\s+(?:[\w$*{}\s,]+\s+from\s*)?|export\s+(?:\*|\{[\w$\s,]*\})\s+from\s*)['"](\.[^'"]+)['"]/gm)) {
+      const dependency = path.posix.normalize(path.posix.join(path.posix.dirname(name), match[1]));
+      if (!CORE_FILES.includes(dependency)) problems.push(name + ' has unvendored dependency ' + match[1]);
+    }
   }
   const projection = record.projection?.[INDEX_FILE];
   if (projection?.mode !== INDEX_PROJECTION || !/^[0-9a-f]{64}$/.test(projection.sourceSha256 || '')) {

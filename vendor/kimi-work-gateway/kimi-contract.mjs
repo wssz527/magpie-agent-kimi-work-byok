@@ -17,6 +17,7 @@
 // nothing about whether the integration still works.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
@@ -435,8 +436,13 @@ export function inspectArchive(file, { models = probeModels() } = {}) {
     return { ...base, state: 'unverified', reason: 'parser_failed:' + failure.message, parser: located.parser };
   }
 
-  const accepted = Array.isArray(parsed?.models) ? parsed.models : [];
-  const skipped = Array.isArray(parsed?.skippedModels) ? parsed.skippedModels : [];
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.models) || !Array.isArray(parsed.skippedModels)
+    || parsed.models.some(row => !row || typeof row !== 'object' || typeof row.model !== 'string' || typeof row.family !== 'string')
+    || parsed.skippedModels.some(id => typeof id !== 'string')) {
+    return { ...base, state: 'unverified', reason: 'parser_result_unrecognized', parser: located.parser };
+  }
+  const accepted = parsed.models;
+  const skipped = parsed.skippedModels;
   const expected = models.map(row => row.id).sort();
   const got = accepted.map(row => row.model).sort();
   const detail = {
@@ -456,7 +462,8 @@ export function inspectArchive(file, { models = probeModels() } = {}) {
 }
 
 export function archiveCandidates({ platform = process.platform, env = process.env } = {}) {
-  if (platform === 'darwin') return [DEFAULT_ARCHIVE];
+  if (platform === 'darwin') return [DEFAULT_ARCHIVE,
+    path.posix.join(env.HOME || os.homedir(), 'Applications', 'Kimi.app', 'Contents', 'Resources', 'app.asar')];
   if (platform !== 'win32') return [];
   const local = env.LOCALAPPDATA || (env.USERPROFILE ? path.win32.join(env.USERPROFILE, 'AppData', 'Local') : null);
   const roots = [local && path.win32.join(local, 'Programs'), local,

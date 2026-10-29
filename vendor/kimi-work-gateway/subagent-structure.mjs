@@ -1,4 +1,4 @@
-export const SUBAGENT_ADAPTER_VERSION = 2;
+export const SUBAGENT_ADAPTER_VERSION = 3;
 
 const ID = '[A-Za-z_$][A-Za-z0-9_$]*';
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -154,9 +154,9 @@ export function probeSubagentKernel(source) {
       { at: configuration.index + configuration[0].indexOf('{') + 1,
         text: '\nif (' + configuration[1] + ' === "secondaryModel") { const __kwgPolicy = kwgSubagentHook.configuration(this.bootstrap.homeDir); if (__kwgPolicy !== undefined) return __kwgPolicy; }\n' },
       { at: spawn.index + spawn[0].indexOf('{') + 1,
-        text: '\nkwgSubagentHook.assertSpawn(this.configService, ' + spawn[1] + ');\n' },
+        text: '\nkwgSubagentHook.assertSpawn(this.configService, ' + spawn[1] + ', this.configService.bootstrap.homeDir);\n' },
       { at: run.index + run[0].lastIndexOf('return'),
-        text: 'kwgSubagentHook.assertModel(this.configService, ' + run[1] + '.accessor.get(' + profile[1] + ').data().modelAlias);\n' },
+        text: 'kwgSubagentHook.assertModel(this.configService, ' + run[1] + '.accessor.get(' + profile[1] + ').data().modelAlias, this.configService.bootstrap.homeDir);\n' },
     ],
   };
 }

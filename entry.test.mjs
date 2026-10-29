@@ -57,7 +57,7 @@ test('the shipped plugin entry connects, forwards both protocols, refreshes mode
         await adapter.tick();
         const policyFile=path.join(stateDir,'subagent-policy.json');
         check(readPolicy().modelAlias==='byok-kth-kimi/'+data[0].id,'selected child policy mismatch');
-        check(adapter.status.subagents.runtime.state==='not-prepared','unloaded runtime reported active');
+        check(['not-prepared','unsupported'].includes(adapter.status.subagents.runtime.state),'unloaded runtime reported active');
         function readPolicy(){return JSON.parse(fs.readFileSync(policyFile,'utf8'));}
         const url=adapter.nativeGateway.url;
         const headers={Authorization:'Bearer '+key};
@@ -73,6 +73,8 @@ test('the shipped plugin entry connects, forwards both protocols, refreshes mode
         const denied=await fetch(url+'/responses',{method:'POST',headers,body:JSON.stringify({model:'group/kimi-entry-chat',input:'hello'})});
         check(denied.status===409 && forwarded===2,'protocol mismatch reached upstream'); await denied.text();
         write(configFile,{model:{providers:{'byok-kth-resp':{baseUrl:url}}},retained:'fixture'});
+        await adapter.tick(); check(adapter.status.code==='native_byok_waiting_import','partial import reported ready');
+        write(configFile,{model:{providers:{'byok-kth-resp':{baseUrl:url},'byok-kth-kimi':{baseUrl:url}}},retained:'fixture'});
         await adapter.tick(); check(adapter.status.code==='native_byok_ready','import readiness mismatch');
         data.shift(); adapter.nativeCatalogAfter=0; await adapter.tick();
         check(adapter.status.compat.scope==='active-models' && adapter.status.compat.modelCount===1,'compat catalog stale');
