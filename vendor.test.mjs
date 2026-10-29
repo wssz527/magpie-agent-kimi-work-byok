@@ -36,9 +36,8 @@ test('the embedded core records the translation config its config.mjs imports', 
 test('the vendored index is an allowlist projection that keeps its source hash', () => {
   const { record } = verifyCore();
   // Pinned on purpose: a vendor copy that silently changes core version is a
-  // release that was not reviewed. `scripts/vendor-core.mjs sync` rewrites the
-  // line below with the version it records.
-  expect(record.version).toBe('9.9.9');
+  // release that was not reviewed. Update this line when syncing a new core.
+  expect(record.version).toBe('0.7.2');
   expect(record.commit).toMatch(/^[0-9a-f]{40}$/);
   const projection = record.projection['index.mjs'];
   expect(projection.mode).toBe(INDEX_PROJECTION);
