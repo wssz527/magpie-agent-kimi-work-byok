@@ -107,6 +107,16 @@ export function copyCore(coreDirectory, target = path.join(here, 'vendor', 'kimi
   fs.mkdirSync(target, { recursive: true });
   for (const name of CORE_FILES) fs.writeFileSync(path.join(target, name), contents[name]);
   fs.writeFileSync(manifest, JSON.stringify(record, null, 2) + '\n');
+  // The vendor test pins the core version so a silent version change cannot
+  // ship unreviewed. Keep the pin in step with the copy instead of leaving it
+  // to fail in CI.
+  const test = path.join(here, 'vendor.test.mjs');
+  try {
+    const text = fs.readFileSync(test, 'utf8');
+    const next = text.replace(/expect\(record\.version\)\.toBe\('[^']+'\)/,
+      "expect(record.version).toBe('" + record.version + "')");
+    if (next !== text) fs.writeFileSync(test, next);
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   return record;
 }
 
