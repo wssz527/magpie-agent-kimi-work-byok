@@ -5,7 +5,7 @@ import { validateModels } from './gateway.mjs';
 
 export const SUBAGENT_POLICY_FILE = 'subagent-policy.json';
 
-export function normalizeSubagentPolicy(value, models) {
+export function normalizeSubagentPolicy(value, models, aliases) {
   if (value === undefined) return { mode: 'inherit' };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('invalid_subagent_policy');
   const mode = value.mode ?? 'inherit';
@@ -19,7 +19,11 @@ export function normalizeSubagentPolicy(value, models) {
     const model = catalog.find(row => row.id === id);
     if (!model) throw Error('subagent_model_unavailable');
     if (!model.tools) throw Error('subagent_model_tools_required');
-    return { model, modelAlias: (model.protocol === 'chat' ? 'byok-kth-kimi/' : 'byok-kth-resp/') + model.id };
+    const modelAlias = aliases === undefined
+      ? (model.protocol === 'chat' ? 'byok-kth-kimi/' : 'byok-kth-resp/') + model.id
+      : aliases instanceof Map ? aliases.get(model.id) : Object.hasOwn(aliases, model.id) ? aliases[model.id] : undefined;
+    if (typeof modelAlias !== 'string' || !modelAlias || modelAlias.length > 2048 || /[\u0000-\u001f\u007f]/.test(modelAlias)) throw Error('subagent_native_model_missing');
+    return { model, modelAlias };
   };
   const { model, modelAlias } = resolve(value.model);
   if (mode === 'pool') {
@@ -79,9 +83,10 @@ export class SubagentPolicy {
     return policy;
   }
 
-  configure(value, models) {
+  configure(value, models, aliases = this.aliases) {
+    this.desired = value;
     let policy;
-    try { policy = normalizeSubagentPolicy(value, models); }
+    try { policy = normalizeSubagentPolicy(value, models, aliases); }
     catch (error) { this.save({ mode: 'blocked', reason: error.message }); throw error; }
     return this.save(policy);
   }

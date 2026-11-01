@@ -21,7 +21,8 @@ export function readConfig(value) {
   return {
     upstream: { baseURL: upstream.baseURL, apiKeyEnv: upstream.apiKeyEnv },
     models: value.models, tokenEnv, port, dns: { enabled: dnsEnabled, port: dnsPort },
-    ...(value.subagents === undefined ? {} : { subagents: normalizeSubagentPolicy(value.subagents, value.models) }),
+    ...(value.subagents === undefined ? {} : { subagents: normalizeSubagentPolicy(
+      value.subagents?.mode === 'force' ? { ...value.subagents, transport: 'native-config' } : value.subagents, value.models) }),
     ...(value.translation === undefined ? {} : { translation: normalizeTranslationConfig(value.translation) }),
   };
 }

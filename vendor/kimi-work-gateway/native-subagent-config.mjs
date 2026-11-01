@@ -27,6 +27,15 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const status = (state, extra = {}) => ({ state, transport: TRANSPORT, ...extra });
 const sha256 = value => crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 
+// A policy may be pinned in one of two ways. A kernel that still knows the
+// `force` key is told `force = true`; a kernel that removed it pins a lone
+// `default_model` by itself, so the key is left out rather than written as a
+// value the schema would drop or diagnose. Nothing else about the block
+// changes, and an unknown capability keeps the historical shape.
+function forceKey(capabilities) {
+  return capabilities?.forceKeySupported !== false;
+}
+
 function splitLines(raw) {
   const lines = [];
   let at = 0;
@@ -198,7 +207,10 @@ function parseBlockBody(bodyLines) {
   }
   if (!out.defaultModel) return null;
   if (out.force) return out.aliases.length ? null : { ...out, mode: 'force' };
-  if (!out.aliases.length || !out.aliases.includes(out.defaultModel)) return null;
+  // Newer kernels use a lone default_model for ordinary child agents while
+  // retaining their native primary, fork and resume behavior.
+  if (!out.aliases.length) return { ...out, mode: 'force' };
+  if (!out.aliases.includes(out.defaultModel)) return null;
   return { ...out, mode: 'pool' };
 }
 
@@ -313,9 +325,10 @@ function validatePolicy(policy) {
   return seen.has(policy.modelAlias);
 }
 
-function renderBlock(policy) {
+function renderBlock(policy, capabilities) {
   const body = policy.mode === 'force'
-    ? ['[secondary_model]', 'force = true', 'default_model = ' + tomlString(policy.modelAlias),
+    ? ['[secondary_model]', ...(forceKey(capabilities) ? ['force = true'] : []),
+      'default_model = ' + tomlString(policy.modelAlias),
       ...(policy.effort === undefined ? [] : ['default_effort = ' + tomlString(policy.effort)])]
     : ['[secondary_model]', 'default_model = ' + tomlString(policy.modelAlias), '[secondary_model.models]',
       ...policy.models.map(row => tomlString(row.modelAlias) + ' = ' + tomlString(row.description))];
@@ -528,7 +541,9 @@ export class NativeSubagentConfig {
 
   // --- public surface ------------------------------------------------------
 
-  update(policy) {
+  // `capabilities` is optional so existing callers keep the historical block.
+  // It only decides whether a pinned block is written with `force = true`.
+  update(policy, capabilities) {
     const mode = policy?.mode;
     if (!policy || typeof policy !== 'object' || !MODES.has(mode)) return status('conflict', { reason: 'invalid_policy' });
     if ((mode === 'force' || mode === 'pool') && !validatePolicy(policy)) {
@@ -562,7 +577,7 @@ export class NativeSubagentConfig {
       if (result.superseded) return status('conflict', { reason: 'ownership_superseded', mode });
       return status('waiting-config', { reason: 'models_missing', mode });
     }
-    const block = renderBlock(policy);
+    const block = renderBlock(policy, capabilities);
     const rendered = withBlock(snapshot, block.body, this.ownerID, snapshot.eol);
     const receipt = { schemaVersion: 1, ownerID: this.ownerID, homeDir: this.homeDir, blockHash: block.digest,
       managed: managedLines(block.body, this.ownerID, rendered.addedEol).join('\n'), mode,

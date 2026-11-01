@@ -43,6 +43,7 @@ test('the shipped plugin entry connects, forwards both protocols, refreshes mode
         adapter=globalThis[Symbol.for('magpie.kimi-desktop.adapter.v1')];
         clearInterval(adapter.timer);
         adapter.nativeProbe.lookupFn=async()=>({address:'10.0.0.2'});
+        adapter.integration.syncNative=async()=>({ok:true});
         const {connect,agent}=await import(${JSON.stringify(new URL('./kimi-desktop.agent.js', import.meta.url).href)});
         const changes=connect({gateway:{v1:desired.gateway.url,key},model:{id:data[0].id}});
         for (const [key,value] of Object.entries(changes)) {
@@ -56,10 +57,31 @@ test('the shipped plugin entry connects, forwards both protocols, refreshes mode
         write(connection,desired);
         await adapter.tick();
         const policyFile=path.join(stateDir,'subagent-policy.json');
-        check(readPolicy().modelAlias==='byok-kth-kimi/'+data[0].id,'selected child policy mismatch');
-        check(['not-prepared','unsupported'].includes(adapter.status.subagents.runtime.state),'unloaded runtime reported active');
+        check(adapter.workSettings().subagents.model===data[0].id,'selected child intent lost');
+        check(readPolicy().mode==='blocked','unconfirmed import activated a child target');
         function readPolicy(){return JSON.parse(fs.readFileSync(policyFile,'utf8'));}
         const url=adapter.nativeGateway.url;
+        const rows=data.map(row=>({alias:(row.id.includes('kimi-entry')?'byok-kth-kimi/':'byok-kth-resp/')+row.id,
+          providerId:row.id.includes('kimi-entry')?'byok-kth-kimi':'byok-kth-resp',model:row.id,
+          family:row.id.includes('kimi-entry')?'kimi':'generic',maxContextSize:row.context_window,capabilities:['tool_use']}));
+        const profile={id:'byok-kth',kind:'kth',baseUrl:url,credentialRef:'byokKth',models:rows};
+        const userId='synthetic-entry-user';
+        const profileKey=(await import('node:crypto')).createHash('sha256').update(userId).digest('hex');
+        const storeFile=path.join(kimiDir,'byok-providers.json');
+        write(storeFile,{v:1,profiles:{[profileKey]:{'byok-kth':profile}}});
+        write(path.join(path.dirname(path.dirname(kimiDir)),'bridge-store/token-store.json'),{opaque:'synthetic encrypted login'});
+        const nativeDoc={retained:'fixture',credentials:{kimiWeb:{userId},byokKth:{apiKey:key}},model:{current:rows[0].alias,
+          providers:Object.fromEntries(rows.map(row=>[row.providerId,{type:row.family==='kimi'?'kimi':'openai_responses',baseUrl:url,credential:'byokKth'}])),
+          models:Object.fromEntries(rows.map(row=>[row.alias,{provider:row.providerId,model:row.model,maxContextSize:row.maxContextSize,capabilities:row.capabilities}]))}};
+        write(configFile,nativeDoc);
+        const privateHome=path.join(kimiDir,'runtime/kimi-code/home');fs.mkdirSync(privateHome,{recursive:true});
+        const nl=String.fromCharCode(10);
+        fs.writeFileSync(path.join(privateHome,'config.toml'),rows.map(row=>'[models.'+JSON.stringify(row.alias)+']'+nl+'provider = "synthetic"'+nl+'model = '+JSON.stringify(row.model)).join(nl));
+        adapter.subagents.native.inspectContract=()=>({state:'source-compatible',version:'synthetic',capabilities:{forceKeySupported:false,singlePoolModelChoice:false}});
+        adapter.subagents.native.compatibility=undefined;adapter.subagents.native.probeAfter=0;
+        await adapter.tick();
+        check(adapter.status.code==='native_byok_ready','native profile was not adopted');
+        check(readPolicy().modelAlias===rows[0].alias,'selected native alias mismatch');
         const headers={Authorization:'Bearer '+key};
         const catalog=await (await fetch(url+'/models/api.json',{headers})).json();
         check(catalog.kimi.models['group/kimi-entry-chat'] && catalog.responses.models['group/entry-responses'],'catalog mismatch');
@@ -72,10 +94,14 @@ test('the shipped plugin entry connects, forwards both protocols, refreshes mode
         }
         const denied=await fetch(url+'/responses',{method:'POST',headers,body:JSON.stringify({model:'group/kimi-entry-chat',input:'hello'})});
         check(denied.status===409 && forwarded===2,'protocol mismatch reached upstream'); await denied.text();
-        write(configFile,{model:{providers:{'byok-kth-resp':{baseUrl:url}}},retained:'fixture'});
-        await adapter.tick(); check(adapter.status.code==='native_byok_waiting_import','partial import reported ready');
-        write(configFile,{model:{providers:{'byok-kth-resp':{baseUrl:url},'byok-kth-kimi':{baseUrl:url}}},retained:'fixture'});
-        await adapter.tick(); check(adapter.status.code==='native_byok_ready','import readiness mismatch');
+        const rebuilt=JSON.parse(fs.readFileSync(configFile,'utf8'));
+        delete rebuilt.model.providers['byok-kth-resp'];delete rebuilt.model.models[rows[1].alias];
+        write(configFile,rebuilt);await adapter.tick();
+        check(adapter.status.code==='native_byok_ready' && adapter.status.integration.state==='repaired','regenerated import was not repaired');
+        fs.unlinkSync(storeFile);await adapter.tick();
+        check(adapter.status.code==='native_byok_waiting_import','missing native profile was treated as imported');
+        write(storeFile,{v:1,profiles:{[profileKey]:{'byok-kth':profile}}});
+        await adapter.tick();check(adapter.status.code==='native_byok_ready','restored native profile was not recognized');
         data.shift(); adapter.nativeCatalogAfter=0; await adapter.tick();
         check(adapter.status.compat.scope==='active-models' && adapter.status.compat.modelCount===1,'compat catalog stale');
         check(adapter.status.gatewayReady && adapter.status.subagents.policy.mode==='blocked','child revocation disabled main gateway');

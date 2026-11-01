@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kimi Work 模型设置</title>
+<style>
+:root{color-scheme:light dark;--bg:var(--magpie-bg,Canvas);--card:var(--magpie-card,Canvas);
+  --fg:var(--magpie-fg,CanvasText);--fg2:var(--magpie-fg-2,CanvasText);--muted:var(--magpie-muted,GrayText);
+  --line:var(--magpie-line,#e3e3e8);--accent:var(--magpie-accent,#4f46e5);--accent-soft:var(--magpie-accent-soft,#eeedfd);
+  --danger:var(--magpie-red,light-dark(#b3261e,#ff8a80));--ok:var(--magpie-green,light-dark(#1a7f5a,#6ee7b7));
+  font:13px/1.5 var(--magpie-font,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif);
+  -webkit-text-size-adjust:100%;text-size-adjust:100%;accent-color:var(--accent)}
+:root[data-theme=dark]{--fg2:var(--magpie-fg-2,#b9b9c1);--line:var(--magpie-line,#333339);--accent:var(--magpie-accent,#a5b4fc);
+  --accent-soft:var(--magpie-accent-soft,#2b2c47);--danger:var(--magpie-red,#ff8a80);--ok:var(--magpie-green,#6ee7b7)}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{padding:8px 4px 16px}
+h1{font-size:18px;font-weight:600;margin:0 0 8px}
+:root[data-embedded=true] h1{display:none}
+h2{font-size:14px;font-weight:600;margin:0}
+p{margin:0}
+.note,.hint{color:var(--fg2);font-size:13px;max-width:74ch}
+.head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:4px}
+.state{font-size:13px;color:var(--fg2);overflow-wrap:anywhere}
+.state[data-error=true]{color:var(--danger)}
+section{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px 24px;border-bottom:1px solid var(--line);padding:20px 0}
+section>h2{grid-column:1;grid-row:1}
+section>:not(h2){grid-column:2;min-width:0}
+label{display:block;font-weight:500;margin:0 0 6px}
+.field{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+input,select,button{font:inherit;color:inherit}
+select,input[type=text]{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 9px;height:32px;max-width:100%}
+select{-webkit-appearance:none;appearance:none;width:320px;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%238b8b94' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+input[type=text]{width:100%;min-width:0;font-size:13px}
+input[type=checkbox]{width:15px;height:15px;flex:0 0 auto;margin:0}
+button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 12px;cursor:pointer;min-height:32px;line-height:20px}
+button:hover:not(:disabled){border-color:var(--muted)}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--magpie-accent-fg,#fff)}
+.target{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.target b{font-weight:500;overflow-wrap:anywhere}
+.tag{font-size:13px;color:var(--fg2)}
+.pool{margin:10px 0 0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row label{display:flex;align-items:center;gap:8px;margin:0;font-weight:500;font-size:13px;min-width:0}
+.row span{overflow-wrap:anywhere}
+.row .missing{color:var(--danger)}
+footer{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;padding:4px 0 0 174px}
+#message{min-height:20px;margin:8px 0 0 174px;font-size:13px;color:var(--fg2)}
+#message[data-error=true]{color:var(--danger)}
+#message[data-ok=true]{color:var(--ok)}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+::selection{background:var(--accent-soft);color:var(--fg)}
+@media(max-width:700px){section{grid-template-columns:1fr;gap:10px}section>h2{grid-row:auto}section>:not(h2){grid-column:1}footer{padding-left:0}#message{margin-left:0}}
+@media(max-width:520px){.row{grid-template-columns:1fr;gap:8px}.field select{flex:1 1 220px}}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Kimi Work 模型设置</h1>
+  <span class="state" id="runtime" role="status" aria-live="polite">正在读取插件状态…</span>
+</div>
+
+<section aria-labelledby="connection-title">
+  <h2 id="connection-title">Kimi 接入</h2>
+  <div class="field"><span class="state" id="connection-state" role="status">正在检查接入…</span><button type="button" id="connect" disabled>重试接入</button></div>
+  <p class="hint">仅接入本机官方 Kimi 桌面 Work，不同步到 Kimi 手机端。</p>
+  <p class="hint">模型会自动同步到 Kimi 原生选择器。首次接入可能需要系统授权；请先登录 Kimi Work。</p>
+</section>
+
+<section aria-labelledby="main-title">
+  <h2 id="main-title">新会话默认模型</h2>
+  <p class="hint">这里设置 Work 的默认模型。已有会话请在 Work 输入框旁的原生菜单中切换；Agent 卡片上的选择只影响新建子代理。</p>
+  <div class="field">
+    <select id="main-model" aria-label="设置 Work 新会话默认模型"></select>
+    <button type="button" id="main-apply" disabled>设为默认</button>
+  </div>
+  <p class="note" id="main-state">已有会话使用 Work 的原生模型菜单。</p>
+</section>
+
+<section aria-labelledby="child-title">
+  <h2 id="child-title">子代理</h2>
+  <div class="field">
+    <select id="mode" aria-label="子代理模型策略">
+      <option value="inherit">继承主模型</option>
+      <option value="force">固定为当前目标</option>
+      <option value="pool">从模型池选择</option>
+    </select>
+  </div>
+  <p class="hint" id="mode-hint">目标模型由 Agent 卡片上的模型选择器决定。</p>
+  <div class="target" id="target-box">
+    <span class="tag">当前目标</span><b id="target-name">未选择</b>
+    <span class="tag">在 Agent 卡片的模型选择器里更改</span>
+  </div>
+  <div id="effort-fields" hidden>
+    <label for="effort">思考档位</label>
+    <select id="effort"></select>
+  </div>
+  <div id="pool-fields" hidden>
+    <p class="hint">勾选候选模型并填写用途，默认目标须在池中。需要主模型时，将它加入池并选择对应别名。</p>
+    <div class="pool" id="pool"></div>
+  </div>
+</section>
+
+<p id="message" role="status" aria-live="polite"></p>
+<footer>
+  <button type="button" id="reset">放弃修改</button>
+  <button type="submit" id="save" class="primary" disabled>保存</button>
+</footer>
+
+<script>
+const TOKEN = '{{TOKEN}}';
+document.documentElement.dataset.embedded = String(parent !== window);
+const $ = id => document.getElementById(id);
+const STATES = { 'file-applied': '原生配置已写入，等待新请求确认', 'waiting-config': '等待 Work 导入模型并生成配置',
+  inherit: '继承主模型', restored: '已撤销本插件的原生配置', conflict: '配置冲突，未覆盖现有内容',
+  blocked: '模型策略不可用', unverified: '原生配置接口尚未通过检查', 'waiting-kimi': '等待 Kimi 启动',
+  'waiting-idle': '等待 Work 空闲', 'expired-request': '切换请求已过期，请重新切换',
+  'invalid-request': '切换请求格式无效，请重新切换', interrupted: '上次切换已中断，请重新切换',
+  requested: '已请求切换主模型', failed: '操作失败', stopped: '本机服务已停止', ready: '本机服务已就绪' };
+
+let next = 0; const waiting = new Map();
+function call(method, params) {
+  const id = ++next;
+  return new Promise((resolve, reject) => {
+    waiting.set(id, { resolve, reject });
+    parent.postMessage({ magpie: 1, id, method, params }, '*');
+  });
+}
+function paint(theme) {
+  if (!theme) return;
+  const root = document.documentElement;
+  root.dataset.theme = theme.dark ? 'dark' : 'light';
+  root.style.colorScheme = theme.dark ? 'dark' : 'light';
+  if (theme.lang) root.lang = theme.lang;
+  for (const [key, value] of Object.entries(theme.tokens || {})) if (value) root.style.setProperty('--magpie-' + key, value);
+}
+addEventListener('message', event => {
+  if (event.source !== parent) return;
+  const message = event.data;
+  if (!message || message.magpie !== 1) return;
+  if (message.event === 'theme') { paint(message.data); return; }
+  const pending = waiting.get(message.id);
+  if (!pending) return;
+  waiting.delete(message.id);
+  if (message.error) pending.reject(new Error(message.error)); else pending.resolve(message.result);
+});
+let told = -1;
+new ResizeObserver(() => {
+  const height = Math.ceil(document.documentElement.getBoundingClientRect().height);
+  if (height === told) return;
+  told = height;
+  parent.postMessage({ magpie: 1, method: 'size', params: { height } }, '*');
+}).observe(document.documentElement);
+
+// The host answers hello with the theme and with each change of it, for
+// this frame only.
+try { const hash = new URLSearchParams(location.hash.slice(1)).get('theme'); if (hash) paint(JSON.parse(hash)); } catch {}
+call('hello').then(theme => { paint(theme); }).catch(() => {});
+parent.postMessage({ magpie: 1, method: 'size', params: { height: Math.ceil(document.documentElement.getBoundingClientRect().height) } }, '*');
+
+const tell = (text, kind) => { const node = $('message'); node.textContent = text; node.dataset.error = String(kind === 'error'); node.dataset.ok = String(kind === 'ok'); };
+let state, data, ready = false, dirty = false, saving = false, revision;
+const eligible = () => (data?.models || []).filter(row => row.tools);
+
+async function api(path, init = {}) {
+  const response = await fetch(path, { ...init, signal: init.signal || AbortSignal.timeout(10000), cache: 'no-store', headers: { 'Content-Type': 'application/json', 'X-Kimi-Panel-Token': TOKEN, ...(init.headers || {}) } });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) { const error = Error(body?.error?.message || '面板请求失败'); error.code = body?.error?.code || 'panel_request_failed'; throw error; }
+  return body;
+}
+
+function target() {
+  const id = data?.subagents?.model;
+  return { id, model: (data?.models || []).find(row => row.id === id) };
+}
+function selection() {
+  const mode = $('mode').value;
+  const current = target().id;
+  if (mode === 'inherit') return { mode, transport: 'native-config' };
+  if (mode === 'force') return { mode, transport: 'native-config', ...(current ? { model: current } : {}),
+    ...($('effort').value ? { effort: $('effort').value } : {}) };
+  return { mode, transport: 'native-config', ...(current ? { model: current } : {}),
+    models: [...$('pool').children].filter(row => row.querySelector('input[type=checkbox]')?.checked)
+      .map(row => ({ id: row.dataset.id, description: row.querySelector('input[type=text]').value.trim() })) };
+}
+function modes() {
+  const mode = $('mode').value;
+  $('effort-fields').hidden = mode !== 'force';
+  $('pool-fields').hidden = mode !== 'pool';
+  $('mode-hint').textContent = mode === 'inherit' ? '新子代理跟随主模型；目标仍由 Agent 卡片的模型选择器决定。'
+    : mode === 'force' ? '所有新子代理都用当前目标模型。' : '新子代理从勾选的模型池中挑选，目标为默认项。';
+  const previous = $('effort').value;
+  $('effort').replaceChildren(new Option('使用该模型的默认档位', ''));
+  for (const effort of target().model?.reasoningEfforts || []) $('effort').add(new Option(effort, effort));
+  if ([...$('effort').options].some(row => row.value === previous)) $('effort').value = previous;
+}
+function render() {
+  if (!ready) return;
+  $('reset').disabled = false;
+  const policy = data?.subagents || { mode: 'inherit' };
+  $('main-model').replaceChildren(new Option('保留 Work 当前选择', ''));
+  for (const model of data?.models || []) $('main-model').add(new Option(model.name, model.id));
+  $('mode').value = ['inherit', 'force', 'pool'].includes(policy.mode) ? policy.mode : 'inherit';
+  const chosen = target();
+  $('target-name').textContent = chosen.model ? chosen.model.name : chosen.id || '未选择';
+  $('target-name').classList.toggle('missing', Boolean(chosen.id) && !chosen.model);
+  $('pool').replaceChildren();
+  for (const model of eligible()) {
+    const entry = policy.models?.find(row => row.id === model.id);
+    const row = document.createElement('div'); row.className = 'row'; row.dataset.id = model.id;
+    const label = document.createElement('label');
+    const check = document.createElement('input'); check.type = 'checkbox'; check.checked = Boolean(entry);
+    const name = document.createElement('span'); name.textContent = model.name;
+    label.append(check, name);
+    const description = document.createElement('input'); description.type = 'text'; description.maxLength = 1000;
+    description.value = entry?.description || ''; description.placeholder = '用途，例如：实现、独立审查';
+    description.setAttribute('aria-label', model.name + ' 的用途');
+    row.append(label, description); $('pool').append(row);
+  }
+  for (const entry of policy.models || []) if (!eligible().some(model => model.id === entry.id)) {
+    const row = document.createElement('div'); row.className = 'row'; row.dataset.id = entry.id;
+    const label = document.createElement('span'); label.className = 'missing'; label.textContent = '已移除：' + entry.id;
+    row.append(label); $('pool').append(row);
+  }
+  modes();
+  if (policy.effort) $('effort').value = policy.effort;
+  const main = data?.main;
+  $('main-state').textContent = (data?.currentModel ? 'Work 默认模型：' + data.currentModel : '已有会话使用 Work 的原生模型菜单。')
+    + (main ? ' · ' + (STATES[main.state] || main.state) + (main.reason ? '：' + main.reason : '') : '');
+  const runtime = data?.subagents || {};
+  // The host only republishes when its status changes, so an old timestamp
+  // says nothing about whether saving works: it is shown, not enforced.
+  const age = Date.now() - (data?.at || 0);
+  $('runtime').textContent = data?.settings !== 'available' ? '无法读取保存的设置 · ' + (data?.settings || '未知原因')
+    : !data?.at ? '尚未收到插件状态，请确认 Kimi Work BYOK 已启用。'
+      : (runtime.observed ? '已在 Work 请求中观察到子代理模型池和默认目标' : STATES[runtime.state] || '正在连接 Work')
+        + (runtime.reason ? ' · ' + runtime.reason : '')
+        + (age > 60000 ? ' · 状态更新于 ' + Math.round(age / 60000) + ' 分钟前' : '');
+  $('runtime').dataset.error = String(data?.settings !== 'available' || ['conflict', 'blocked', 'unverified'].includes(runtime.state));
+  const connection = data?.connection || {};
+  const reasons = { native_import_waiting_login: '请先打开并登录 Kimi Work。',
+    native_bridge_waiting_launch: '正在准备 Kimi 连接；有任务运行时会等待空闲。',
+    native_bridge_waiting_work: '等待 Kimi Work 页面就绪。', native_bridge_waiting_settings: '正在连接 Kimi 原生导入。',
+    native_import_disconnected: '已在 Kimi 中断开，点击重试接入可重新连接。',
+    native_import_account_changed: 'Kimi 账户已改变，请核对账户后重新接入。',
+    native_import_busy: '等待 Kimi 当前任务结束后自动同步。',
+    native_import_feature_disabled: '首次准备尚未通过，请完成系统授权后重试。' };
+  const connected = connection.imported && connection.state !== 'waiting-native-sync';
+  $('connection-state').textContent = connection.preparing ? '正在准备，系统可能请求授权…'
+    : connected ? '模型目录已接入 Kimi 原生选择器'
+      : connection.preparation === 'cancelled' ? '系统授权已取消，可点击重试接入。'
+        : reasons[connection.reason] || (connection.reason ? '接入待完成：' + connection.reason : '正在同步模型目录…');
+  $('connection-state').dataset.error = String(!connected && ['conflict', 'cancelled', 'failed'].includes(connection.preparation || connection.state));
+  $('connect').disabled = !ready || connection.preparing || !connection.retryAvailable;
+  revision = data?.revision;
+  $('save').disabled = !ready || saving || data?.settings !== 'available' || !data?.models?.length;
+  $('main-apply').disabled = !ready || saving || data?.settings !== 'available' || !data?.models?.length;
+}
+const signatureOf = body => JSON.stringify([body?.models, body?.subagents, body?.settings, body?.revision,
+  body?.currentModel, body?.main, body?.code, body?.connection]);
+function draft() {
+  return { mode: $('mode').value, effort: $('effort').value, main: $('main-model').value,
+    rows: [...$('pool').children].map(row => ({ id: row.dataset.id,
+      checked: row.querySelector('input[type=checkbox]')?.checked,
+      description: row.querySelector('input[type=text]')?.value })) };
+}
+function restoreDraft(value) {
+  $('mode').value = value.mode; modes();
+  if ([...$('effort').options].some(row => row.value === value.effort)) $('effort').value = value.effort;
+  if ([...$('main-model').options].some(row => row.value === value.main)) $('main-model').value = value.main;
+  for (const row of $('pool').children) {
+    const previous = value.rows.find(entry => entry.id === row.dataset.id);
+    if (!previous) continue;
+    const check = row.querySelector('input[type=checkbox]'), input = row.querySelector('input[type=text]');
+    if (check) check.checked = previous.checked === true;
+    if (input && previous.description !== undefined) input.value = previous.description;
+  }
+}
+function disconnected(error) {
+  ready = false;
+  $('runtime').textContent = error?.code === 'unauthorized'
+    ? '设置页会话已过期，请重新打开本页。未保存修改仍保留在页面中。'
+    : '本机模型服务已断开，正在自动重连。未保存修改仍保留在页面中。';
+  $('runtime').dataset.error = 'true';
+  $('save').disabled = true;
+  $('main-apply').disabled = true;
+  $('reset').disabled = true;
+  if ($('connect')) $('connect').disabled = true;
+}
+async function load({ keepDraft = false } = {}) {
+  const previous = keepDraft && dirty ? draft() : null;
+  const expectedRevision = revision;
+  let body;
+  try { body = await api('/api/state'); }
+  catch (error) { disconnected(error); throw error; }
+  const changed = !ready || signatureOf(body) !== signatureOf(data);
+  data = body; ready = true;
+  if (!keepDraft) { dirty = false; render(); }
+  else if (changed) {
+    render();
+    if (previous) { restoreDraft(previous); revision = expectedRevision; }
+  }
+  return body;
+}
+async function save(extra = {}) {
+  if (saving || !ready) return;
+  const previous = draft();
+  const expectedRevision = revision;
+  saving = true; $('save').disabled = true; $('main-apply').disabled = true;
+  let saved = false;
+  try {
+    const body = await api('/api/settings', { method: 'POST', body: JSON.stringify({ revision: expectedRevision, ...extra }) });
+    data = body.state; dirty = false; revision = data.revision; saved = true;
+    tell('设置已保存。', 'ok');
+  } catch (failure) {
+    tell(failure.message || '保存未完成，请稍后重试。', 'error');
+    await load({ keepDraft: true }).catch(() => {});
+  } finally { saving = false; render(); if (!saved) restoreDraft(previous); }
+}
+$('connect').addEventListener('click', async () => {
+  if (!ready) return;
+  $('connect').disabled = true;
+  try {
+    await api('/api/connect', { method: 'POST', body: '{}' });
+    tell('已开始重新接入；首次准备请完成系统授权。');
+    await load({ keepDraft: dirty });
+  } catch (error) { tell(error.message || '接入未完成，请重试。', 'error'); }
+  finally { if (ready) $('connect').disabled = Boolean(data?.connection?.preparing); }
+});
+$('mode').addEventListener('change', () => { dirty = true; modes(); });
+$('main-model').addEventListener('change', () => { dirty = true; });
+$('pool').addEventListener('input', () => { dirty = true; });
+$('pool').addEventListener('change', () => { dirty = true; });
+$('effort').addEventListener('change', () => { dirty = true; });
+$('reset').addEventListener('click', () => { dirty = false; render(); tell('已恢复保存的设置。'); });
+$('save').addEventListener('click', () => {
+  const policy = selection();
+  if (policy.mode !== 'inherit' && !target().id) { tell('请先在 Agent 卡片的模型选择器里选定子代理目标。', 'error'); return; }
+  if (policy.mode === 'pool' && (!policy.models.length || policy.models.length > 32 || !policy.models.some(row => row.id === target().id))) {
+    tell('请选择 1–32 个候选模型，并把默认目标加入池中。', 'error'); return;
+  }
+  if (policy.mode === 'pool' && policy.models.some(row => !row.description)) { tell('请为每个候选模型填写用途说明。', 'error'); return; }
+  void save({ subagents: policy });
+});
+$('main-apply').addEventListener('click', () => {
+  const id = $('main-model').value;
+  if (!id) { tell('请选择要切换的主模型。', 'error'); return; }
+  void save({ mainModel: id });
+});
+load().catch(failure => tell(failure.message || '无法读取插件状态。', 'error'));
+setInterval(() => { if (!saving && document.visibilityState === 'visible') load({ keepDraft: dirty }).catch(() => {}); }, 3000);
+</script>
+</body>
+</html>

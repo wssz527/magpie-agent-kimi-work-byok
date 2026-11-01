@@ -396,6 +396,7 @@ async function controllerFixture() {
   const kimiDir=path.join(f.directory,'kimi/daimon-share/daimon'),stateDir=path.join(f.directory,'state');
   const flagFile=path.join(f.directory,'flag.json'),calls=[];
   const adapter=new LocalKimiAdapter({kimiDir,stateDir,flagFile,stabilityMs:0,lookupFn:async()=>({address:'10.0.0.2'}),
+    nativeContext: () => ({ profileKey: 'synthetic-account' }), syncNative: async () => ({ ok: true }), panelPort: 0,
     rpcCall:async(_runner,method,params)=>{calls.push({method,params});
       return method==='conversations.getKimiModelList'?{models:[{model:'k3-agent'}]}:{current:'k3-agent'};}});
   const doc={credentials:{kimiCode:{apiKey:'synthetic-kimi-key',refreshToken:'synthetic-refresh'}},
@@ -408,6 +409,16 @@ async function controllerFixture() {
   write(adapter.connectionFile,desired);
   return {...f,adapter,desired,calls,doc,async cleanup(){await adapter.stop();await f.cleanup();}};
 }
+
+test('leaving native mode stops its desktop supervisor even after listeners have closed', async () => {
+  const f = await controllerFixture(); let stopped = 0;
+  try {
+    f.adapter.desktop = { inspect: () => ({ enabled: true }), stop: async () => { stopped++; }, close() {} };
+    write(f.adapter.connectionFile, { ...f.desired, enabled: false, mode: 'bridge' });
+    await f.adapter.tick();
+    expect(stopped).toBe(1);
+  } finally { await f.cleanup(); }
+});
 
 test('switching from legacy bridge waits for idle and restores its owned address before native mode', async()=>{
   const f=await controllerFixture();
@@ -430,29 +441,65 @@ test('switching from legacy bridge waits for idle and restores its owned address
   } finally {await f.cleanup();}
 });
 
-test('native configured readiness requires import and a running Work runtime, not just an available HTTP endpoint',async()=>{
-  const f=await controllerFixture();
+test('native ticks maintain the desktop runtime without republishing legacy remote evidence', async () => {
+  const f = await controllerFixture();
+  const calls = [];
+  const remote = { state: 'ready', catalog: 'catalog-extended', added: 5, updater: 'delegated' };
+  f.adapter.desktop = {
+    ensure: async () => { calls.push('ensure'); return { state: 'active', remote }; },
+    inspect: () => ({ enabled: true, state: 'active', remote }),
+    close() {}, stop: async () => {},
+  };
   try {
-    await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_waiting_import');
-    const doc=read(f.adapter.configFile);
-    doc.model.providers['byok-kth-resp']={type:'openai_responses',baseUrl:f.adapter.nativeGateway.url};
-    write(f.adapter.configFile,doc);await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_waiting_import');
-    expect(f.adapter.status.setup.missingProviders).toEqual(['byok-kth-kimi']);
-    doc.model.providers['byok-kth-kimi']={type:'kimi',baseUrl:f.url};
-    write(f.adapter.configFile,doc);
-    const wrongImport=fs.readFileSync(f.adapter.configFile);
-    await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_waiting_import');
-    expect(f.adapter.status.setup.missingProviders).toEqual(['byok-kth-kimi']);
-    expect(fs.readFileSync(f.adapter.configFile).equals(wrongImport)).toBe(true);
-    doc.model.providers['byok-kth-kimi'].baseUrl=f.adapter.nativeGateway.url;
-    write(f.adapter.configFile,doc);await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_ready');
-    expect(f.adapter.status.setup.missingProviders).toEqual([]);
-    delete doc.model.providers['byok-kth-kimi'];
-    f.data.splice(f.data.findIndex(row=>row.id===ids[3]),1);f.adapter.nativeCatalogAfter=0;
-    write(f.adapter.configFile,doc);await f.adapter.tick();expect(f.adapter.status.code).toBe('native_byok_ready');
-    write(f.adapter.runnerFile,{lifecycleStatus:'stopped'});await f.adapter.tick();expect(f.adapter.status.code).toBe('waiting_kimi');
+    await f.adapter.tick();
+    expect(calls).toEqual(['ensure']);
+    expect(f.adapter.status.code).toBe('native_byok_waiting_import');
+    expect(f.adapter.status.remote).toBeUndefined();
+    expect(JSON.stringify(f.adapter.status)).not.toContain('catalog-extended');
+  } finally { await f.cleanup(); }
+});
+
+test('native readiness requires the current profile and repairs regenerated entries without claiming inference', async () => {
+  const f = await controllerFixture();
+  try {
+    await f.adapter.tick();
+    expect(f.adapter.status.code).toBe('native_byok_waiting_import');
+    const doc = read(f.adapter.configFile);
+    doc.model.providers['byok-kth-resp'] = { type: 'openai_responses', baseUrl: f.adapter.nativeGateway.url };
+    write(f.adapter.configFile, doc);
+    await f.adapter.tick();
+    expect(f.adapter.status.code).toBe('native_byok_waiting_import');
+    expect(f.adapter.status.integration.reason).toBe('profile_store_missing');
+    const rows = f.adapter.nativeGateway.models.map(model => ({ alias: (model.protocol === 'chat' ? 'byok-kth-kimi/' : 'byok-kth-resp/') + model.id,
+      providerId: model.protocol === 'chat' ? 'byok-kth-kimi' : 'byok-kth-resp', model: model.id,
+      family: model.protocol === 'chat' ? 'kimi' : 'generic', maxContextSize: model.contextWindow }));
+    const profile = { id: 'byok-kth', kind: 'kth', baseUrl: f.url, credentialRef: 'byokKth', models: rows };
+    const store = { v: 1, profiles: { 'synthetic-account': { 'byok-kth': profile } } };
+    const storeFile = path.join(f.adapter.kimiDir, 'byok-providers.json');
+    write(storeFile, store);
+    const before = fs.readFileSync(f.adapter.configFile);
+    await f.adapter.tick();
+    expect(f.adapter.status.integration.reason).toBe('foreign_url');
+    expect(fs.readFileSync(f.adapter.configFile).equals(before)).toBe(true);
+    profile.baseUrl = f.adapter.nativeGateway.url;
+    delete doc.model.providers['byok-kth-resp'];
+    doc.credentials.byokKth = { apiKey: key };
+    write(storeFile, store); write(f.adapter.configFile, doc);
+    await f.adapter.tick();
+    expect(f.adapter.status.code).toBe('native_byok_ready');
+    expect(f.adapter.status.integration.state).toBe('repaired');
+    const rebuilt = read(f.adapter.configFile);
+    delete rebuilt.model.providers['byok-kth-resp'];
+    delete rebuilt.model.models[rows[0].alias];
+    write(f.adapter.configFile, rebuilt); await f.adapter.tick();
+    expect(f.adapter.status.integration.state).toBe('repaired');
+    expect(read(f.adapter.configFile).model.models[rows[0].alias]).toBeTruthy();
+    f.data.splice(f.data.findIndex(row => row.id === ids[3]), 1); f.adapter.nativeCatalogAfter = 0;
+    await f.adapter.tick(); expect(f.adapter.status.code).toBe('native_byok_ready');
+    write(f.adapter.runnerFile, { lifecycleStatus: 'stopped' }); await f.adapter.tick();
+    expect(f.adapter.status.code).toBe('waiting_kimi');
     expect(f.requests).toHaveLength(0);
-  } finally {await f.cleanup();}
+  } finally { await f.cleanup(); }
 });
 
 test('invalid native gateway changes stop the old native listener without editing Kimi or using fallback inference',async()=>{
@@ -529,18 +576,39 @@ test('the plugin guards inference while a native subagent policy is still being 
     // the guard ordering instead of the local app version.
     f.adapter.subagents.native.inspectContract = () => ({ state: 'source-compatible', version: 'synthetic' });
     f.adapter.subagents.native.compatibility = undefined; f.adapter.subagents.native.probeAfter = 0;
+    f.adapter.integration = { reconcile: async () => ({ state: 'ready', imported: true,
+      aliases: Object.fromEntries(ids.map(id => [id, (id === ids[3] ? 'byok-kth-kimi/' : 'byok-kth-resp/') + id])) }), close() {} };
     await f.adapter.tick();
-    f.adapter.options.workModels = { subagents: { mode: 'pool', transport: 'native-config', model: ids[0],
-      models: [{ id: ids[0], description: 'Default' }, { id: ids[1], description: 'Review' }] } };
-
-    // A newly saved native target must not forward inference before the first
-    // tick applies it: the gateway would otherwise send the old tool schema.
-    f.adapter.nativeSubagentInitializing = true;
+    const saving = f.adapter.saveWorkSettings({ revision: f.adapter.workSettings().revision,
+      subagents: { mode: 'pool', transport: 'native-config', model: ids[0],
+        models: [{ id: ids[0], description: 'Default' }, { id: ids[1], description: 'Review' }] } });
     expect(f.adapter.nativeGateway.gateway.beforeRequest('responses', { model: ids[0], input: [] }))
       .toEqual({ status: 503, code: 'subagent_policy_initializing' });
-    await f.adapter.tick();
+    await saving;
     expect(f.adapter.nativeSubagentInitializing).toBe(false);
+    expect(f.adapter.subagents.policy.value.mode).toBe('pool');
+    expect(read(f.adapter.connectionFile).subagents.model).toBe(ids[0]);
     expect(f.adapter.nativeGateway.gateway.beforeRequest('responses', { model: ids[0], input: [] })).toBeUndefined();
+  } finally { await f.cleanup(); }
+});
+
+test('a retired host drains its own requests before releasing the adapter and local services', async () => {
+  const f = await controllerFixture();
+  try {
+    await f.adapter.tick();
+    const pending = new AbortController();
+    f.adapter.nativeGateway.inflight.add(pending);
+    const retired = f.adapter.retire();
+    expect(f.adapter.retire()).toBe(retired);
+    expect(f.adapter.stopping).toBe(false);
+    expect(f.adapter.nativeGateway.server.listening).toBe(true);
+    expect(pending.signal.aborted).toBe(false);
+    f.adapter.nativeGateway.inflight.delete(pending);
+    await retired;
+    expect(f.adapter.nativeGateway.server).toBeNull();
+    expect(f.adapter.workPanel.server).toBeNull();
+    expect(fs.existsSync(f.adapter.lockFile)).toBe(false);
+    expect(read(f.adapter.connectionFile)).toMatchObject(f.desired);
   } finally { await f.cleanup(); }
 });
 

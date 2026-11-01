@@ -15,7 +15,9 @@ function fixture() {
   const runtime = { prepare() { calls.push('prepare'); return { state: 'prepared' }; },
     async launch() { calls.push('launch'); return { state: 'waiting-kimi-exit' }; },
     inspect() { return { state: 'waiting-launch' }; } };
-  const options = { stateDir: path.join(root, 'state'), kimiDir: path.join(root, 'kimi'), runtime };
+  const native = { update(policy) { return { state: policy.mode === 'inherit' ? 'inherit' : 'file-applied', transport: 'native-config' }; },
+    beforeRequest() {}, close() { return { state: 'restored' }; } };
+  const options = { stateDir: path.join(root, 'state'), kimiDir: path.join(root, 'kimi'), runtime, native };
   return { options, calls, runtime, control: new NativeSubagents(options) };
 }
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -35,7 +37,8 @@ test('the selected native child model is validated against Magpie visibility and
   const desired = { mode: 'force', model: models[0].id };
   const status = await control.update(desired, models);
   expect(status.policy).toMatchObject({ mode: 'force', modelAlias: 'byok-kth-resp/' + models[0].id });
-  expect(status.runtime.state).toBe('waiting-launch');
+  expect(status.runtime.state).toBe('file-applied');
+  expect(status.policy.transport).toBe('native-config');
   expect(read(control.policy.file).model).toBe(models[0].id);
   const blocked = await control.update(desired, []);
   expect(blocked.policy).toEqual({ mode: 'blocked', reason: 'subagent_model_unavailable' });
@@ -85,8 +88,9 @@ test('a failed runtime operation does not disable the gateway policy or leak raw
   const request = { id: 'prepare-failure-0001', action: 'prepare', at: Date.now() };
   const status = await control.update({ mode: 'force', model: models[0].id }, models, request);
   expect(status.policy.mode).toBe('force');
-  expect(status.operation).toEqual({ state: 'failed', reason: 'subagent_operation_failed' });
-  await control.update(undefined, models, request);
+  expect(status.operation).toBeUndefined();
+  expect(status.runtime.transport).toBe('native-config');
+  expect((await control.update(undefined, models, request)).operation).toEqual({ state: 'failed', reason: 'subagent_operation_failed' });
   expect(calls).toEqual(['prepare']);
   expect(fs.readFileSync(control.receiptFile, 'utf8')).not.toContain('synthetic-secret');
 });
@@ -96,7 +100,8 @@ test('an unavailable selected child blocks an explicit launch while keeping prep
   const status = await control.update({ mode: 'force', model: 'removed/model' }, models,
     { id: 'launch-blocked-00001', action: 'launch', at: Date.now() });
   expect(status.policy.mode).toBe('blocked');
-  expect(status.operation).toEqual({ state: 'failed', reason: 'subagent_policy_blocked' });
+  expect(status.operation).toBeUndefined();
+  expect(status.runtime.transport).toBe('native-config');
   expect(calls).toEqual([]);
 });
 

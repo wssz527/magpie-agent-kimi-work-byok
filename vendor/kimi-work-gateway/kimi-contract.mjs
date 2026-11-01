@@ -416,6 +416,18 @@ function buildContext(text, decode, sources, aliases, parserName, catalog) {
   return { context: null, pending, ok: false, parseable, reason: 'closure_unstable' };
 }
 
+export function decodeSourceStrings(text) {
+  const table = findTableFunction(text), decoder = findDecoder(text);
+  if (!table || !decoder) throw Error('source_decoder_unverified');
+  const tableBody = tableBodyOf(text, table.name), decoderBody = functionBody(text, decoder.name);
+  const start = text.lastIndexOf('(function(', table.at);
+  if (!tableBody || !decoderBody || start < 0) throw Error('source_decoder_unverified');
+  const context = sandbox();
+  vm.runInContext(tableBody + '\n' + decoderBody, context, { timeout: 10000 });
+  vm.runInContext(text.slice(start, table.at + table.footer.length) + ';', context, { timeout: 20000 });
+  return decodeFactory(text, decoder, value => context[decoder.name](value));
+}
+
 export function locateContract(text) {
   const table = findTableFunction(text);
   if (!table) return { ok: false, reason: 'table_not_found' };

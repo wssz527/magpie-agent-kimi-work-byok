@@ -43,9 +43,10 @@ export class NativeSubagents {
     return this.operation;
   }
 
-  async update(desired, models, request) {
+  async update(desired, models, request, aliases) {
+    if (desired?.mode === 'force') desired = { ...desired, transport: 'native-config' };
     let policy;
-    try { policy = this.policy.configure(desired, models); }
+    try { policy = this.policy.configure(desired, models, aliases); }
     catch (error) { policy = { mode: 'blocked', reason: reason(error) }; }
     const native = desired?.transport === 'native-config' || desired?.mode === 'pool';
     if (native || this.nativeActive || this.nativeRestoring) {
