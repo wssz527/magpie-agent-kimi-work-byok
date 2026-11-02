@@ -72,13 +72,18 @@ magpie plugin add github:wssz527/magpie-agent-kimi-work-byok
 
 ### 更新到新版本
 
-用上面的 `github:` 地址安装时，Magpie 会跟踪该仓库默认分支的提交：插件有新版本时，「已安装」里会出现更新提示，侧栏显示「1 个更新」，点一下即可更新；也可在终端单独更新这个插件：
+用上面的 `github:` 地址安装时，Magpie 会跟踪该仓库默认分支的提交，但不会自动装上：仓库有新提交时，侧栏「插件 → 已安装」会显示「1 个更新」，进入「已安装」后点本插件这一行的 **更新**，只重新解析并安装这一个插件，选项和启用状态保持不变，其他插件不会被更新（宿主仍会重启，见下文）。
+
+单插件更新目前只有 Magpie 图形界面里的这个「更新」按钮，终端没有对应命令：
 
 ```sh
-magpie plugin update magpie-agent-kimi-work-byok
+magpie plugin update      # 更新全部已安装插件
+magpie plugin update X    # 同样更新全部插件，X 会被忽略
 ```
 
-`magpie plugin update` 不带参数会更新全部插件，只想更新本插件时请带上名字。固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.6.3`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
+`plugin update`（`upgrade` 与它同义）不接受插件名，命令行里带的名字不会缩小更新范围。也不要改用重新添加来绕过：对已安装的同一个 `github:` 地址再次执行 `magpie plugin add`，Bun 会沿用 `bun.lock` 里已有的提交，仓库有新提交也装不到；先 `plugin rm` 再 `add` 虽然会重新解析，却会丢掉这个插件的选项（例如 `workPanelPort`），不建议这样做。
+
+固定到某个标签或提交的写法（例如 `github:wssz527/magpie-agent-kimi-work-byok#v0.6.3`）不会自动产生更新提示，需要手动改成新版本。从本地文件夹添加的副本只会按文件夹当前内容加载，不会从 GitHub 更新；想持续接收更新，请改用 `github:` 来源（同一时间只保留一个来源，避免两个副本争用 `kimi-desktop` Agent ID）。
 
 插件更新会重启 Magpie 的插件宿主，正在流式返回的回答会先完成。接入意图、模型池、用途和默认项保存在用户状态目录，Kimi 正常更新或重建生成配置时，根据已确认的当前账户原生 profile 自动恢复 provider 和模型表，不按版本号重新导入。首次和后续目录同步由插件调用 Kimi 原生导入接口完成。账户身份已确认且已有接入授权时，可恢复丢失的原生目录；检测到明确断开、身份无法确认或手动配置冲突时暂停并报告，不猜账户或还原旧凭据。插件的 GitHub 更新来源与检查机制保持不变。
 
