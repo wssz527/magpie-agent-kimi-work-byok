@@ -4,6 +4,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readSubagentJSON, writeSubagentJSON } from './vendor/kimi-work-gateway/subagent-policy.mjs';
+import { publicSurfaces } from './vendor/kimi-work-gateway/translation-runtime.mjs';
 
 // A local service the plugin's Magpie page opens. The panel frame the host
 // draws is sandboxed to scripts alone and its policy reaches no network
@@ -29,6 +30,16 @@ const KNOWN_REASONS = ['subagent_native_bundle_unavailable', 'subagent_native_co
 const PLAIN = /^[a-z][a-z0-9_-]{0,100}$/;
 const EFFORT = /^[a-z][a-z0-9_-]{0,31}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
+// The reasoning translation section edits the same config the embedded host
+// reads, so the panel only passes the documented fields through; the core
+// normalizer, not this page, is the authority on what is valid.
+const TRANSLATION_FIELDS = ['enabled', 'provider', 'targetLanguage', 'view', 'customEndpoint', 'customModel', 'apiKeyEnv'];
+const TRANSLATION_PROVIDERS = ['bing', 'google', 'custom'];
+const TRANSLATION_LANGUAGES = ['zh', 'en', 'ja', 'ko', 'es', 'fr', 'de', 'ru'];
+const TRANSLATION_VIEWS = ['translated', 'original'];
+const TRANSLATION_STATES = ['disabled', 'not-started', 'starting', 'attaching', 'active', 'inactive',
+  'legacy-running', 'waiting-kimi-exit', 'waiting-quit', 'failed', 'unverified', 'incompatible',
+  'stale', 'pending-settings', 'unavailable'];
 const MESSAGES = {
   unauthorized: '面板会话已失效，请重新打开 Kimi Work 模型设置。',
   origin_refused: '请求来源不受信任，已拒绝。',
@@ -58,6 +69,15 @@ const MESSAGES = {
   subagent_model_unavailable: '所选模型已不在当前目录中，请重新选择。',
   subagent_model_tools_required: '此模型不支持工具调用，无法用作子代理。',
   invalid_main_model: '所选主模型已不在当前目录中。',
+  invalid_translation_config: '思考翻译设置无效，请检查服务、语言、默认视图和环境变量名。',
+  invalid_translation_endpoint: '自定义翻译地址需使用 HTTPS（本机可用 HTTP），且不能包含账号、查询参数或片段。',
+  translation_endpoint_required: '请填写自定义翻译服务的完整 Chat Completions 地址。',
+  translation_settings_conflict: '翻译设置已在别处修改，已重新载入最新内容。',
+  translation_scope_conflict: '状态目录里的翻译设置属于另一份 Kimi，未覆盖。',
+  translation_settings_stopping: '插件正在停止，请稍后重试。',
+  translation_settings_owner_conflict: '另一个插件实例正在管理翻译设置，未保存。',
+  translation_settings_unavailable: '无法写入翻译设置，请检查状态目录后重试。',
+  translation_status_unavailable: '无法读取翻译运行状态。',
   save_failed: '保存未完成，请稍后重试。',
 };
 const SAVE_CODES = new Set(['work_settings_conflict', 'work_settings_unavailable', 'work_settings_invalid',
@@ -75,6 +95,12 @@ const statusFor = code => code === 'work_settings_conflict' || code === 'work_no
 // A refused call may carry its code as `.code` or as its message, which is
 // how the adapter's own errors are written; nothing else is passed on.
 const failureCode = error => [error?.code, error?.message].find(value => typeof value === 'string' && PLAIN.test(value));
+const translationStatusFor = code => code === 'translation_settings_conflict' || code === 'translation_scope_conflict'
+  || code === 'translation_settings_owner_conflict' ? 409
+  : /^invalid_translation_/.test(code) || code === 'translation_endpoint_required' ? 400 : 503;
+const TRANSLATION_SAVE_CODES = new Set(['invalid_translation_config', 'invalid_translation_endpoint',
+  'translation_endpoint_required', 'translation_settings_conflict', 'translation_scope_conflict',
+  'translation_settings_stopping', 'translation_settings_owner_conflict']);
 
 function sameSecret(actual, expected) {
   if (typeof actual !== 'string' || typeof expected !== 'string') return false;
@@ -322,6 +348,110 @@ export class WorkPanel {
     return this.state();
   }
 
+  // The translation section reads the embedded host's own file. A missing
+  // file is the documented default with translation off, and reading never
+  // writes one, so a standalone gateway's settings are left as they are.
+  async translation() {
+    if (typeof this.adapter?.translationSettings !== 'function') {
+      return { ok: false, reason: 'translation_settings_unavailable' };
+    }
+    let value;
+    try { value = await this.adapter.translationSettings(); } catch (error) {
+      return { ok: false, reason: failureCode(error) || 'translation_settings_unavailable' };
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, reason: 'translation_settings_unavailable' };
+    const revision = value.revision === null || value.revision === undefined ? null
+      : typeof value.revision === 'string' && value.revision.length > 0 && value.revision.length <= 256 ? value.revision : undefined;
+    if (revision === undefined) return { ok: false, reason: 'translation_settings_conflict' };
+    return { ok: true, revision, settings: value.settings };
+  }
+
+  // Every field the page may read back, normalized to the documented shape.
+  // No value from the environment is included: only the variable name.
+  readTranslationSettings(value) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return {
+      enabled: source.enabled === true,
+      provider: TRANSLATION_PROVIDERS.includes(source.provider) ? source.provider : 'bing',
+      targetLanguage: TRANSLATION_LANGUAGES.includes(source.targetLanguage) ? source.targetLanguage : 'zh',
+      view: TRANSLATION_VIEWS.includes(source.view) ? source.view : 'translated',
+      customEndpoint: typeof source.customEndpoint === 'string' ? source.customEndpoint.slice(0, 2048) : '',
+      customModel: typeof source.customModel === 'string' ? source.customModel.slice(0, 2048) : '',
+      apiKeyEnv: typeof source.apiKeyEnv === 'string' && source.apiKeyEnv ? source.apiKeyEnv.slice(0, 128) : '',
+    };
+  }
+
+  // The runtime's own state, never the BYOK connection: a ready gateway says
+  // nothing about whether translation is attached to a visible Work view.
+  translationStatusOf() {
+    if (typeof this.adapter?.translationStatus !== 'function') return { state: 'unavailable' };
+    let value;
+    try { value = this.adapter.translationStatus(); } catch {
+      return { state: 'failed', reason: 'translation_status_unavailable' };
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { state: 'unavailable' };
+    const status = { state: TRANSLATION_STATES.includes(value.state) ? value.state : 'unavailable' };
+    if (plain(value.reason)) status.reason = value.reason;
+    if (plain(value.warning)) status.warning = value.warning;
+    if (typeof value.version === 'string' && /^[0-9][0-9A-Za-z.+-]{0,127}$/.test(value.version)) status.version = value.version;
+    if (value.verification === 'unverified-version') status.verification = 'unverified-version';
+    if (value.shared === true) status.shared = true;
+    if (value.keySet === true) status.keySet = true;
+    // The page needs the same allowlisted shape the host reports. It is run
+    // through the core's own filter again rather than copied, so an adapter
+    // that already narrowed it and one that did not both reach the page as the
+    // identical, allowlisted structure.
+    const surfaces = publicSurfaces(value.surfaces);
+    if (surfaces) status.surfaces = surfaces;
+    return status;
+  }
+
+  async translationState() {
+    const settings = await this.translation();
+    return {
+      revision: settings.ok ? settings.revision : null,
+      settings: settings.ok ? this.readTranslationSettings(settings.settings) : null,
+      status: this.translationStatusOf(),
+      ...(settings.ok ? {} : { unavailable: settings.reason }),
+    };
+  }
+
+  // The page checks the same shape the core normalizer will, so a typo is
+  // answered with the field that is wrong instead of a generic refusal. The
+  // endpoint, model and variable name are still validated by the core.
+  validateTranslation(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw refusal(400, 'invalid_translation_config');
+    for (const key of Object.keys(value)) if (!TRANSLATION_FIELDS.includes(key)) throw refusal(400, 'invalid_translation_config');
+    for (const key of TRANSLATION_FIELDS) if (value[key] === undefined) throw refusal(400, 'invalid_translation_config');
+    if (typeof value.enabled !== 'boolean' || !TRANSLATION_PROVIDERS.includes(value.provider)
+      || !TRANSLATION_LANGUAGES.includes(value.targetLanguage) || !TRANSLATION_VIEWS.includes(value.view)) {
+      throw refusal(400, 'invalid_translation_config');
+    }
+    if (typeof value.customEndpoint !== 'string' || value.customEndpoint.length > 2048
+      || typeof value.customModel !== 'string' || value.customModel.length > 2048 || CONTROL.test(value.customModel)
+      || typeof value.apiKeyEnv !== 'string' || !/^[A-Z_][A-Z0-9_]{0,127}$/.test(value.apiKeyEnv)) {
+      throw refusal(400, 'invalid_translation_config');
+    }
+    return { enabled: value.enabled, provider: value.provider, targetLanguage: value.targetLanguage, view: value.view,
+      customEndpoint: value.customEndpoint, customModel: value.customModel, apiKeyEnv: value.apiKeyEnv };
+  }
+
+  async saveTranslation(input) {
+    const settings = await this.translation();
+    if (!settings.ok) throw refusal(translationStatusFor(settings.reason), settings.reason);
+    if (input.revision !== settings.revision || (input.revision !== null && typeof input.revision !== 'string')) {
+      throw refusal(409, 'translation_settings_conflict');
+    }
+    if (typeof this.adapter?.saveTranslationSettings !== 'function') throw refusal(503, 'translation_settings_unavailable');
+    try { await this.adapter.saveTranslationSettings({ revision: input.revision, settings: input.settings }); }
+    catch (failure) {
+      const reported = failureCode(failure);
+      const code = reported && TRANSLATION_SAVE_CODES.has(reported) ? reported : 'save_failed';
+      throw refusal(translationStatusFor(code), code);
+    }
+    return this.translationState();
+  }
+
   // The fixed target comes from the native picker, so a policy is checked
   // here only for shape, the visible catalog and the target's presence;
   // the host validates the rest against the model it really picked.
@@ -465,6 +595,29 @@ export class WorkPanel {
       if (Object.keys(input).length) return this.refuse(res, 400, 'invalid_json', cors);
       if (typeof this.adapter.requestNativeConnection !== 'function') return this.refuse(res, 503, 'work_not_connected', cors);
       this.reply(res, 202, { ok: true, operation: this.adapter.requestNativeConnection() }, cors);
+      return;
+    }
+    if (pathname === '/api/translation') {
+      // Reading is a GET; a save is a POST. Both answer with the same shape,
+      // so the page can show what it is editing and what the host is doing.
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        this.reply(res, 200, await this.translationState(), cors);
+        return;
+      }
+      if (req.method !== 'POST') return this.refuse(res, 405, 'method_not_allowed', cors);
+      if (this.translationSaving) return this.refuse(res, 429, 'panel_busy', cors);
+      this.translationSaving = true;
+      try {
+        const body = await readJSON(req);
+        for (const key of Object.keys(body)) if (key !== 'revision' && key !== 'settings') throw refusal(400, 'invalid_json');
+        if (body.revision !== null && typeof body.revision !== 'string') throw refusal(400, 'invalid_json');
+        const settings = this.validateTranslation(body.settings);
+        this.reply(res, 200, await this.saveTranslation({ revision: body.revision ?? null, settings }), cors);
+      } catch (failure) {
+        const reported = failureCode(failure);
+        const code = reported && MESSAGES[reported] ? reported : 'panel_request_failed';
+        this.refuse(res, failure?.status || 503, code, cors);
+      } finally { this.translationSaving = false; }
       return;
     }
     if (pathname !== '/api/subagents' && pathname !== '/api/settings') return this.refuse(res, 404, 'not_found', cors);

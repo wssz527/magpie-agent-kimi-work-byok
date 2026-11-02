@@ -1,43 +1,62 @@
-// Kimi Work reasoning translation - CDP renderer payload (gateway edition).
+// Kimi reasoning translation - CDP renderer payload (gateway edition).
 //
-// The gateway host injects this IIFE and uses its return value as proof that
-// the engine is really running in a Kimi renderer. Translation itself happens
-// in the host process: this script only forwards the visible reasoning text
-// over the `__kwgTranslate` binding and paints what comes back.
+// One engine, two surfaces. The host injects this IIFE into a page it has
+// classified, and the same queue, cache, concurrency limit, quiet window, epoch
+// cancellation and code/link protection serve both: only the DOM contract and
+// the moment that counts as "finished" differ.
 //
-// Structure verified on 3.2.21:
+// Work (local renderer, verified on 3.2.21 / 3.2.23):
 //
 //   .think-block
 //     .think-summary          collapse toggle, aria-expanded
 //     .think-body-wrap
 //       .think-body           v-if: only exists while expanded
-//         .chat-markdown      the rendered reasoning
+//         .chat-markdown
 //
-// The mirror is anchored to .think-block, not to .think-body, because Vue
-// drops the body subtree on collapse and on re-render. Hiding the source hides
-// the whole reasoning subtree, so the translation occupies exactly the same
-// space with Kimi's own width, scroll area and collapse state.
+// Chat (https://www.kimi.com, verified against release a045362):
 //
-// The selectors above describe the Kimi build this file was written against;
-// they are not trusted as a compatibility proof. `status()` reports how many
-// `.think-block` nodes the page actually contains (`seenBlocks`) and how many
-// exposed the expected summary/body structure (`blocks`), so the host can
-// distinguish an empty conversation from a drifted DOM instead of presenting
-// an unmatched page as a working translation. Dispatching is additionally
-// gated on a content-quiet window that never looks at label wording: a future
-// Kimi that renames its "thinking" status cannot turn streamed partial text
-// into a paid retranslation every scan.
+//   .toolcall-container.thinking-container     root; expanded adds is-expanded
+//     .toolcall-title-container
+//     .resize-container[.enable-grow-animation] height animation; present while
+//                                               the block is still running
+//       .slot-container
+//         .toolcall-content
+//           .toolcall-content-text
+//             .markdown-container
+//               .markdown
+//
+// The two disagree in ways that decide the implementation:
+//  * collapse: Work drops the body from the DOM, Chat keeps it and animates
+//    height/opacity. A collapsed Chat block still holds its full text, so it is
+//    never read into a dispatch: the text is present but the user cannot see it.
+//  * expansion state: an aria-expanded button on Work, a class on the Chat root.
+//  * streaming: Work is inferred from the label wording plus a content-quiet
+//    window; Chat exposes its running prop as .enable-grow-animation. The quiet
+//    window applies to both, so partially streamed text is never paid for.
+//
+// The surface is derived from the live location, never from the host's claim
+// alone. A new-document script runs in every later document of the same target,
+// so a page that navigated away must not mount, and a SPA route change (which
+// creates no new document) must retire what is on screen.
+//
+// The mirror is anchored to the surface root, not to the text node, because
+// both surfaces rebuild their content subtree: Work on collapse, Chat on every
+// re-render.
+//
+// The selectors above describe the builds this file was written against; they
+// are not trusted as a compatibility proof. `status()` reports how many roots
+// the page actually contains (`seenBlocks`) and how many exposed the expected
+// structure (`blocks`), so the host can distinguish an empty conversation from
+// a drifted DOM instead of presenting an unmatched page as a working
+// translation.
 (() => {
   'use strict';
   const VERSION = 1;
   const ENGINE = '__kwgTranslation';
   const NS = 'kwg';
-  const BLOCK = '.think-block';
-  const SUMMARY = '.think-summary';
-  const LABEL = '.think-label';
-  const BODY = '.think-body';
-  const BODY_WRAP = '.think-body-wrap';
-  const MARKDOWN = '.chat-markdown';
+  const WORK_PROTOCOLS = ['file:', 'app:', 'kimi:'];
+  const CHAT_ORIGIN = 'https://www.kimi.com';
+  const CHAT_PATHS = [/^\/chat\/[A-Za-z0-9_-]{1,128}$/, /^\/chat\/history$/, /^\/$/];
 
   const CLASS = {
     bar: `${NS}-bar`, btn: `${NS}-btn`, view: `${NS}-view-btn`, status: `${NS}-status`,
@@ -72,6 +91,116 @@
     translation_network_error: '网络错误',
   };
 
+  const WORK = {
+    name: 'work',
+    root: '.think-block',
+    // A Work block accepts a mirror when it carries either half of the
+    // summary/body pair; the other half is what a collapse removes.
+    structured(block) {
+      return !!(block.querySelector('.think-summary') || block.querySelector('.think-body'));
+    },
+    source(block) {
+      const body = block.querySelector('.think-body');
+      const scope = body || block;
+      return scope.querySelector('.chat-markdown') || body || null;
+    },
+    expanded(block) {
+      const summary = block.querySelector('.think-summary');
+      if (!summary) return true;
+      const value = summary.getAttribute ? summary.getAttribute('aria-expanded') : summary.ariaExpanded;
+      return value !== 'false';
+    },
+    // Work publishes no streaming flag, so it is read from the label wording.
+    // A future Kimi that renames the status still cannot stream partial text
+    // into a paid request: the content-quiet window below is wording-blind.
+    settled(block) {
+      const label = block.querySelector('.think-label') || block.querySelector('.think-summary');
+      const text = (label?.textContent || '').trim();
+      if (!text) return true;
+      if (/thinking|思考中/i.test(text) && !/thought|done|complete|完成/i.test(text)) return false;
+      return true;
+    },
+    anchor(block) {
+      const wrap = block.querySelector('.think-body-wrap');
+      return wrap && wrap.parentNode === block ? wrap : null;
+    },
+    barAnchor(block) {
+      const summary = block.querySelector('.think-summary');
+      return summary && summary.parentNode === block ? summary : null;
+    },
+  };
+
+  const CHAT = {
+    name: 'chat',
+    root: '.toolcall-container.thinking-container',
+    structured(block) {
+      return !!(block.querySelector('.resize-container') && block.querySelector('.toolcall-content'));
+    },
+    source(block) {
+      const content = block.querySelector('.toolcall-content-text') || block.querySelector('.toolcall-content');
+      return content ? content.querySelector('.markdown') || content : null;
+    },
+    // The Thinking component puts the expanded state on its own root; its title
+    // container carries no aria-expanded, so the Work rule cannot read it.
+    expanded(block) {
+      return !!(block.classList && block.classList.contains('is-expanded'));
+    },
+    // `running` is the only stable streaming signal: ContainerBlock renders a
+    // thinking block outside .toolcall-flow whenever the container holds more
+    // than thinking, so an is-streaming ancestor is absent in that layout while
+    // the grow class is present in both.
+    settled(block) {
+      return !block.querySelector('.resize-container.enable-grow-animation');
+    },
+    anchor(block) {
+      const resize = block.querySelector('.resize-container');
+      return resize && resize.parentNode === block ? resize : null;
+    },
+    barAnchor(block) {
+      const resize = block.querySelector('.resize-container');
+      return resize && resize.parentNode === block ? resize : null;
+    },
+  };
+
+  const SURFACES = { work: WORK, chat: CHAT };
+
+  // The host decides what to attach to; this decides what may mount. Both are
+  // evaluated, so a script that survives into another document of the same
+  // target can never mount on a page the host did not classify as this surface.
+  function surfaceOf(href) {
+    let url;
+    try { url = new URL(href); } catch { return 'other'; }
+    if (WORK_PROTOCOLS.includes(url.protocol)) return /\/kimi-agent\.html$/.test(url.pathname) ? 'work' : 'other';
+    if (url.protocol === 'https:' && url.origin === CHAT_ORIGIN
+      && CHAT_PATHS.some(pattern => pattern.test(url.pathname))) return 'chat';
+    return 'other';
+  }
+
+  function currentHref() {
+    const location = globalThis.location;
+    if (typeof location === 'string') return location;
+    if (typeof location?.href !== 'string') return '';
+    // The test realms and older embeddings hand over a plain object. Resolving
+    // it against itself keeps a relative href meaningful and never throws.
+    try { return new URL(location.href, location.href).href; } catch { return location.href; }
+  }
+
+  const TOP = (() => {
+    try { return !globalThis.top || globalThis.top === globalThis; } catch { return false; }
+  })();
+  // The surface the host classified the target as, and the surface the live
+  // location actually shows. The observed one wins when it exists, so a script
+  // that survives into a later document — or a SPA route change — can never
+  // mount the selectors of a page it is no longer looking at. The declaration is
+  // only used where no location exists at all, which is not a browser document.
+  const HREF = currentHref();
+  const DECLARED = SURFACES[globalThis.__kwgTranslationConfig?.surface]
+    ? globalThis.__kwgTranslationConfig.surface : 'work';
+  const SURFACE = HREF ? surfaceOf(HREF) : DECLARED;
+  const SURFACE_DEF = SURFACES[SURFACE] || null;
+  const GENERATION = Number.isInteger(globalThis.__kwgTranslationGeneration)
+    ? globalThis.__kwgTranslationGeneration : 0;
+
   const engine = { version: VERSION, configure, stop, status };
   const doc = globalThis.document;
   let legacy = globalThis.__kctWork || globalThis.window?.__kctWork;
@@ -84,25 +213,56 @@
     return { state, version: VERSION };
   }
 
-  // Capability snapshot for the host. `blocks` counts the mounted contexts that
-  // still show the expected summary/body structure; `seenBlocks` counts every
-  // `.think-block` the page renders. A page with seenBlocks > blocks proves the
-  // selectors drifted from the running Kimi build, which must surface as a
-  // structural note instead of a silently "working" engine. DOM readiness is
-  // only claimed once the mountable structure was actually seen or the page
-  // has none of the blocks at all (an empty conversation is still ready).
+  // Declared here so the early-return paths below can report an empty
+  // capability snapshot without touching the engine state that does not exist
+  // yet on those paths.
+  let state = null;
+
+  function install(value) {
+    try {
+      Object.defineProperty(globalThis, ENGINE, { value, configurable: true, writable: true, enumerable: false });
+    } catch {
+      try { globalThis[ENGINE] = value; } catch { /* host will report inactive */ }
+    }
+    return value;
+  }
+
+  // A page that is not the declared surface, or not the top-level document,
+  // gets an engine that reports why and refuses to do anything: no observer, no
+  // DOM, no binding traffic.
+  if (SURFACE === 'other' || !SURFACE_DEF || !TOP) {
+    install({
+      version: VERSION,
+      configure: () => statusReport('inactive'),
+      stop: () => statusReport('inactive'),
+      status: () => statusReport('inactive'),
+    });
+    return statusReport('inactive');
+  }
+
+  // Capability snapshot for the host. `blocks` counts the roots that still show
+  // the expected interior structure; `seenBlocks` counts every root the page
+  // renders. seen > blocks proves the selectors drifted from the running build,
+  // and seen === 0 is an empty conversation, not verified structure: the host
+  // must be able to tell those apart instead of reading both as "working".
   function capability() {
-    if (!doc || typeof doc.querySelectorAll !== 'function') return null;
-    const seen = doc.querySelectorAll(BLOCK)?.length || 0;
+    if (!doc || typeof doc.querySelectorAll !== 'function' || !state) return null;
+    const seen = doc.querySelectorAll(SURFACE_DEF.root)?.length || 0;
     const structured = [...state.live].filter(ctx => ctx.block.isConnected
-      && (ctx.block.querySelector(SUMMARY) || ctx.block.querySelector(BODY))).length;
-    return { blocks: structured, seenBlocks: seen };
+      && ctx.surface.structured(ctx.block)).length;
+    return {
+      blocks: structured,
+      seenBlocks: seen,
+      structure: !seen ? 'none' : structured < seen ? 'partial' : 'matched',
+    };
   }
 
   function statusReport(state) {
     const value = statusObject(state);
+    value.surface = SURFACE;
+    value.top = TOP;
     const snapshot = capability();
-    if (snapshot) { value.blocks = snapshot.blocks; value.seenBlocks = snapshot.seenBlocks; }
+    if (snapshot) Object.assign(value, snapshot);
     return value;
   }
 
@@ -124,19 +284,13 @@
     for (const node of doc.querySelectorAll?.(`[${ATTR}]`) || []) {
       if (node.getAttribute?.(ATTR) && typeof node.remove === 'function') node.remove();
     }
-    for (const block of doc.querySelectorAll?.(BLOCK) || []) {
+    // Both surfaces hide their own content with this class; whichever one the
+    // previous engine touched has to be released, or the page keeps a blank
+    // reasoning area after translation is withdrawn.
+    for (const block of doc.querySelectorAll?.(`.${CLASS.hiding}`) || []) {
       if (block.classList?.contains(CLASS.hiding)) block.classList.remove(CLASS.hiding);
     }
     return carried;
-  }
-
-  function install(value) {
-    try {
-      Object.defineProperty(globalThis, ENGINE, { value, configurable: true, writable: true, enumerable: false });
-    } catch {
-      try { globalThis[ENGINE] = value; } catch { /* host will report inactive */ }
-    }
-    return value;
   }
 
   // retirePrevious() reads the old engine, so it must run before the new one is
@@ -152,17 +306,21 @@
   }
 
   if (!doc || typeof doc.createElement !== 'function' || !doc.body) {
+    // Nothing can be translated without a document to translate in, but the
+    // answer still states which surface this script believes it is in and
+    // whether it is the top-level one: the host refuses a payload that cannot
+    // prove either, and "no document" must not read as "some other page".
     install({
       version: VERSION,
-      configure: () => statusObject('inactive'),
-      stop: () => statusObject('inactive'),
-      status: () => statusObject('inactive'),
+      configure: () => statusReport('inactive'),
+      stop: () => statusReport('inactive'),
+      status: () => statusReport('inactive'),
     });
-    return statusObject('inactive');
+    return statusReport('inactive');
   }
 
   const carriedCache = retirePrevious();
-  const state = {
+  state = {
     active: false,
     // Every start() gets a new epoch. Anything captured under an older epoch
     // (a pending reply, a queued task, a timer callback) is dead: it may not
@@ -183,6 +341,8 @@
     startupTimer: 0,
     bootHandler: null,
     style: null,
+    route: null,
+    leftSurface: false,
   };
 
   // ---------------------------------------------------------------- settings
@@ -242,7 +402,9 @@
   }
 
   // The CDP binding is fire-and-forget: it returns nothing, so the reply is
-  // matched by id through __kwgTranslationReceive and bounded by a timer.
+  // matched by id through __kwgTranslationReceive and bounded by a timer. The
+  // host stamps every injection with a generation and drops a request that
+  // carries an older one, so a reply can never cross a navigation boundary.
   function requestTranslation(text, protectedTexts) {
     if (text.length > 120000) return Promise.reject(failure('translation_text_too_large'));
     const binding = globalThis.__kwgTranslate;
@@ -254,7 +416,7 @@
       }, REPLY_TIMEOUT_MS);
       state.waiters.set(id, { resolve, reject, timer });
       try {
-        binding(JSON.stringify({ type: 'translate', id, text, protectedTexts }));
+        binding(JSON.stringify({ type: 'translate', id, generation: GENERATION, text, protectedTexts }));
       } catch {
         clearTimeout(timer);
         state.waiters.delete(id);
@@ -303,21 +465,14 @@
     return typeof node.textContent === 'string' ? node.textContent : '';
   }
 
-  function sourceNode(block) {
-    const body = block.querySelector(BODY);
-    const scope = body || block;
-    return scope.querySelector(MARKDOWN) || body || null;
-  }
-
-  // While the translation is shown, the engine's own hiding rule sets
-  // `display:none` on .think-body-wrap. In a real DOM innerText of a hidden
-  // subtree falls back to textContent, which loses the block boundaries a
-  // rendered <p>/<pre> contributes, so the next scan would read slightly
-  // different text and retranslate the same content. The class is removed for
-  // the duration of the read and restored immediately, so layout never paints
-  // in between.
-  function readSourceText(block) {
-    const node = sourceNode(block);
+  // While the translation is shown, the engine's own hiding rule removes the
+  // source from layout. In a real DOM innerText of a hidden subtree falls back
+  // to textContent, which loses the block boundaries a rendered <p>/<pre>
+  // contributes, so the next scan would read slightly different text and
+  // retranslate the same content. The class is removed for the duration of the
+  // read and restored immediately, so layout never paints in between.
+  function readSourceText(block, surface) {
+    const node = surface.source(block);
     if (!node) return '';
     const hidden = block.classList.contains(CLASS.hiding);
     if (hidden) block.classList.remove(CLASS.hiding);
@@ -328,10 +483,6 @@
     }
   }
 
-  function sourceText(block) {
-    return readSourceText(block);
-  }
-
   // pre/code/a keep their visible text verbatim. innerText already carries the
   // code text without Markdown fences, so the service protects these exact
   // strings instead of guessing from formatting.
@@ -339,8 +490,8 @@
   // Protection is bounded as a whole, never by silently dropping entries: if
   // the code blocks exceed the budget the caller must show the original rather
   // than send code to a translator.
-  function protectedTexts(block) {
-    const node = sourceNode(block);
+  function protectedTexts(block, surface) {
+    const node = surface.source(block);
     if (!node) return { values: [], overflow: false };
     const collected = [];
     const seen = new Set();
@@ -371,21 +522,6 @@
     return { values, overflow: false };
   }
 
-  function isSettled(block) {
-    const label = block.querySelector(LABEL) || block.querySelector(SUMMARY);
-    const text = (label?.textContent || '').trim();
-    if (!text) return true;
-    if (/thinking|思考中/i.test(text) && !/thought|done|complete|完成/i.test(text)) return false;
-    return true;
-  }
-
-  function isExpanded(block) {
-    const summary = block.querySelector(SUMMARY);
-    if (!summary) return true;
-    const value = summary.getAttribute ? summary.getAttribute('aria-expanded') : summary.ariaExpanded;
-    return value !== 'false';
-  }
-
   // ------------------------------------------------------------------ mirror
   function detach(node) {
     if (!node) return;
@@ -399,16 +535,19 @@
     const mirror = doc.createElement('div');
     mirror.className = CLASS.translated;
     mirror.setAttribute(ATTR, 'translated');
-    const wrap = ctx.block.querySelector(BODY_WRAP);
-    const reference = wrap && wrap.parentNode === ctx.block ? wrap : null;
+    const reference = ctx.surface.anchor(ctx.block);
     ctx.block.insertBefore(mirror, reference);
     ctx.mirror = mirror;
   }
 
+  // A collapsed block never shows a translation: Work has no body left to
+  // replace, and Chat keeps the body in the DOM but animates it out of sight,
+  // so leaving the mirror visible would put text on screen that the user did
+  // not expand.
   function syncVisibility(ctx) {
-    const show = state.settings.view === 'translated' && !!ctx.translation;
+    const show = state.settings.view === 'translated' && !!ctx.translation && ctx.surface.expanded(ctx.block);
     if (ctx.mirror) {
-      ctx.mirror.hidden = !show || !isExpanded(ctx.block);
+      ctx.mirror.hidden = !show;
       if (ctx.mirror.textContent !== ctx.translation) ctx.mirror.textContent = ctx.translation;
     }
     if (show) ctx.block.classList.add(CLASS.hiding);
@@ -463,7 +602,9 @@
 .${CLASS.status}[data-state="busy"]{opacity:.55}
 .${CLASS.note}{margin-left:auto;opacity:.5;font-size:11px;white-space:nowrap}
 .${CLASS.hiding} > .think-body-wrap{display:none !important}
+.${CLASS.hiding} > .resize-container{display:none !important}
 .think-block:not(:has(> .think-summary[aria-expanded="true"])) > .${CLASS.translated}{display:none !important}
+.toolcall-container.thinking-container:not(.is-expanded) > .${CLASS.translated}{display:none !important}
 .${CLASS.translated}{max-height:340px;overflow-y:auto;overscroll-behavior-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--markdown-B1_Content-font-size,14px);line-height:var(--markdown-B1_Content-line-height,1.65);color:var(--Labels-Primary,inherit)}
 .${CLASS.translated}[hidden]{display:none !important}
 `;
@@ -473,7 +614,7 @@
 
   function mount(block) {
     if (state.ctxs.has(block)) return state.ctxs.get(block);
-    if (!block.querySelector(SUMMARY) && !block.querySelector(BODY)) return null;
+    if (!SURFACE_DEF.structured(block)) return null;
     const bar = doc.createElement('div');
     bar.className = CLASS.bar;
     bar.setAttribute(ATTR, 'bar');
@@ -504,12 +645,14 @@
 
     bar.append(translatedBtn, originalBtn, retryBtn, statusEl, note);
 
-    const summary = block.querySelector(SUMMARY);
-    if (summary && summary.parentNode === block) block.insertBefore(bar, summary);
-    else block.insertBefore(bar, block.firstChild);
+    // The bar goes above the reasoning content and below the surface's own
+    // header, so the header keeps its click target and the controls stay with
+    // the block they belong to.
+    block.insertBefore(bar, SURFACE_DEF.barAnchor(block));
 
     const ctx = {
       block, bar, statusEl, buttons: [translatedBtn, originalBtn], retryBtn,
+      surface: SURFACE_DEF,
       source: '', translation: '', rendered: false, mirror: null,
       token: 0, timer: 0, pending: [], lastMutation: NaN,
     };
@@ -587,10 +730,13 @@
   function refresh(ctx) {
     if (!state.active) return;
     if (!ctx.block.isConnected) { drop(ctx); return; }
-    const text = sourceText(ctx.block);
-    // Collapsing removes .think-body (a v-if node), so a missing source while
-    // the block is still present means "temporarily collapsed", not "empty":
-    // the mirror is anchored to the block and must survive the collapse.
+    const surface = ctx.surface;
+    const text = readSourceText(ctx.block, surface);
+    // Collapsing Work removes .think-body (a v-if node), so a missing source
+    // while the block is still present means "temporarily collapsed", not
+    // "empty": the mirror is anchored to the block and must survive the
+    // collapse. Chat keeps the text in a collapsed block, so the expansion
+    // state below is what decides there.
     if (!text) {
       if (!ctx.source) clearTranslation(ctx);
       else syncVisibility(ctx);
@@ -606,21 +752,21 @@
       ctx.block.classList.remove(CLASS.hiding);
       setStatus(ctx, '', '');
     }
+    // A collapsed block is not visible, whatever its DOM contains. Keeping its
+    // existing translation is right; sending the text it hides is not.
+    if (!surface.expanded(ctx.block)) { syncVisibility(ctx); return; }
+    // Chat marks a still-running block with .enable-grow-animation; Work's
+    // equivalent is the label heuristic below.
+    if (!surface.settled(ctx.block)) { syncVisibility(ctx); return; }
     // Content-quiet window, independent of the settle heuristic: text that
     // mutated inside QUIET_MS is still streaming (or mutating under a future
     // Kimi whose label wording the heuristic cannot read), so dispatching it
     // would pay for a partial translation that is immediately invalidated.
     // A freshly mounted context starts inside the window (NaN comparison is
     // always false, so the explicit flag below), because a mount can land in
-    // the middle of a stream. The check sits after the settled gate, so
-    // already-translated or cached blocks never re-enter scheduling, and a
-    // held dispatch reschedules itself once, for the remaining window — a
-    // block at rest is sent, a streaming block keeps being pushed forward
-    // until the mutations stop.
-    if (!isSettled(ctx.block)) return;
-    // A context whose content was never seen mutating is dispatched at once;
-    // the quiet window only guards text that is actively changing, which is
-    // exactly the case the settle heuristic cannot cover on a future Kimi.
+    // the middle of a stream. A held dispatch reschedules itself once, for the
+    // remaining window — a block at rest is sent, a streaming block keeps being
+    // pushed forward until the mutations stop.
     const quietFor = Number.isFinite(ctx.lastMutation) ? QUIET_MS - (Date.now() - ctx.lastMutation) : 0;
     if (quietFor > 0) { schedule(ctx, quietFor + 50); return; }
     const key = cacheKey(text);
@@ -632,7 +778,7 @@
     const pending = ctx.pending.filter(entry => entry.token === ctx.token);
     ctx.pending = pending;
     if (pending.some(entry => entry.key === key)) return;
-    const protectedSet = protectedTexts(ctx.block);
+    const protectedSet = protectedTexts(ctx.block, surface);
     // Unbounded code cannot be protected, so the text is left as the original
     // with an explicit error instead of being sent to a translator unprotected.
     if (protectedSet.overflow) { setStatus(ctx, '代码内容过长，未翻译', 'error'); return; }
@@ -696,10 +842,62 @@
     }
   }
 
+  // ------------------------------------------------------------------- route
+  // Chat is a SPA: moving to /settings or another conversation keeps the same
+  // document, so no new-document script runs and no execution context is
+  // cleared. Without this the engine would keep bars and mirrors on a page that
+  // no longer shows reasoning at all. When there is no location to read, the
+  // document that was already classified at boot is still the one in front of
+  // us; there is no route to leave.
+  function onSurface() {
+    const href = currentHref();
+    return !href || surfaceOf(href) === SURFACE;
+  }
+
+  function leaveSurface() {
+    teardown();
+    state.settings = { ...state.settings, enabled: false };
+    state.leftSurface = true;
+  }
+
+  function watchRoute() {
+    const target = globalThis;
+    if (state.route || typeof target.addEventListener !== 'function') return;
+    const handler = () => scheduleScan(40);
+    const route = { handler, owner: null, pushState: null, replaceState: null };
+    target.addEventListener('popstate', handler);
+    target.addEventListener('hashchange', handler);
+    const history = target.history;
+    if (history && typeof history.pushState === 'function' && typeof history.replaceState === 'function') {
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        const wrapped = function (...args) {
+          const result = original.apply(this, args);
+          try { handler(); } catch { /* the next scan reports the route anyway */ }
+          return result;
+        };
+        try { history[name] = wrapped; route[name] = original; route.owner = history; } catch { /* frozen history */ }
+      }
+    }
+    state.route = route;
+  }
+
+  function unwatchRoute() {
+    const route = state.route;
+    if (!route) return;
+    state.route = null;
+    globalThis.removeEventListener?.('popstate', route.handler);
+    globalThis.removeEventListener?.('hashchange', route.handler);
+    if (route.owner) {
+      try { route.owner.pushState = route.pushState; route.owner.replaceState = route.replaceState; } catch {}
+    }
+  }
+
   // ---------------------------------------------------------------- observer
   function scan() {
     if (!state.active) return;
-    const blocks = doc.querySelectorAll(BLOCK) || [];
+    if (!onSurface()) { leaveSurface(); return; }
+    const blocks = doc.querySelectorAll(SURFACE_DEF.root) || [];
     for (const block of blocks) mount(block);
     for (const ctx of [...state.live]) {
       if (!ctx.block.isConnected) { drop(ctx); continue; }
@@ -719,17 +917,17 @@
   // own painting can never reschedule or retranslate: without this, a mirror
   // update would restart the quiet window after every reply and repeatedly
   // delay or duplicate the next dispatch. A childList mutation on a container
-  // (the conversation list itself) is also relevant: that is how new think
+  // (the conversation list itself) is also relevant: that is how new reasoning
   // blocks are appended, and the target is not inside any block.
   function trackedTarget(record) {
     const target = record?.target;
     if (!target || typeof target.closest !== 'function') return null;
     if (target.closest(`[${ATTR}]`)) return null;
-    const block = target.closest(BLOCK);
+    const block = target.closest(SURFACE_DEF.root);
     if (block) return block;
     if (record.type === 'childList'
       && [...record.addedNodes || [], ...record.removedNodes || []]
-        .some(node => node && typeof node.matches === 'function' && node.matches(BLOCK))) return target;
+        .some(node => node && typeof node.matches === 'function' && node.matches(SURFACE_DEF.root))) return target;
     return null;
   }
 
@@ -748,13 +946,18 @@
 
   function start() {
     if (state.active || !doc.body) return;
+    if (!onSurface()) { state.leftSurface = true; return; }
     state.active = true;
     state.epoch += 1;
     ensureStyles();
+    if (SURFACE === 'chat') watchRoute();
     if (!state.observer && typeof globalThis.MutationObserver === 'function') {
       state.observer = new globalThis.MutationObserver(onMutations);
       state.observer.observe(doc.body, {
-        childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['aria-expanded'],
+        childList: true, subtree: true, characterData: true, attributes: true,
+        // aria-expanded is the Work collapse signal; class carries the Chat
+        // equivalents (is-expanded, enable-grow-animation).
+        attributeFilter: ['aria-expanded', 'class'],
       });
     }
     scan();
@@ -771,6 +974,7 @@
     // Retiring the epoch makes every timer, queued task and pending reply of
     // this run dead, even if the next run starts before they settle.
     state.epoch += 1;
+    unwatchRoute();
     if (state.observer) { state.observer.disconnect(); state.observer = null; }
     clearTimeout(state.scanTimer);
     clearTimeout(state.startupTimer);
@@ -811,7 +1015,7 @@
     if (state.active) teardown(rescope);
     if (rescope) { state.cache.clear(); state.cacheChars = 0; }
     state.settings = next;
-    if (next.enabled) start();
+    if (next.enabled && !state.leftSurface) start();
     return statusReport(state.active ? 'active' : 'inactive');
   }
 

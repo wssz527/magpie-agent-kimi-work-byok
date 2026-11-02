@@ -445,3 +445,176 @@ test('a disconnected panel disables writes, preserves its draft and reconciles a
   expect(vm.runInContext('ready', context)).toBe(true);
   for (const id of ['save', 'main-apply', 'reset']) expect(fields[id].disabled).toBe(false);
 });
+
+// The reasoning translation form is a second draft on the same page: it must
+// keep its own dirty state and must never be repainted over an unsaved edit.
+test('the translation section keeps its own draft and is not overwritten by a poll', () => {
+  const source = fs.readFileSync(new URL('./ui/service.html', import.meta.url), 'utf8');
+  const fields = {
+    'tr-enabled': { checked: true }, 'tr-provider': { value: 'custom' }, 'tr-language': { value: 'en' },
+    'tr-view': { value: 'original' }, 'tr-endpoint': { value: 'https://translator.example.invalid/v1/chat/completions' },
+    'tr-model': { value: 'synthetic-model' }, 'tr-keyenv': { value: 'SYNTHETIC_TRANSLATION_KEY' },
+    'tr-custom': { hidden: true }, 'tr-provider-hint': { textContent: '' },
+    'tr-save': { disabled: false }, 'tr-reset': { disabled: false },
+    'tr-draft': { textContent: '' }, 'tr-state': { textContent: '', dataset: {} },
+  };
+  const context = vm.createContext({ $: id => fields[id], ready: true, translationSaving: false,
+    translationData: { revision: 'tr-1', settings: { enabled: false, provider: 'bing', targetLanguage: 'zh',
+      view: 'translated', customEndpoint: '', customModel: '', apiKeyEnv: 'KIMI_WORK_TRANSLATION_API_KEY' },
+      status: { state: 'disabled' } },
+    translationBase: { enabled: false, provider: 'bing', targetLanguage: 'zh', view: 'translated',
+      customEndpoint: '', customModel: '', apiKeyEnv: 'KIMI_WORK_TRANSLATION_API_KEY' },
+    api: async () => ({ revision: 'tr-2', settings: { enabled: true, provider: 'google', targetLanguage: 'ko',
+      view: 'translated', customEndpoint: '', customModel: '', apiKeyEnv: 'KIMI_WORK_TRANSLATION_API_KEY' },
+      status: { state: 'active' } }) });
+  vm.runInContext(source.slice(source.indexOf('const TR_STATES ='), source.indexOf('async function saveTranslation(')), context);
+  expect(vm.runInContext('translationDirty()', context)).toBe(true);
+  expect(fields['tr-save'].disabled).toBe(false);
+  vm.runInContext('translationRenderState()', context);
+  expect(fields['tr-draft'].textContent).toBe('有未保存的翻译修改');
+  expect(fields['tr-custom'].hidden).toBe(false);
+  expect(fields['tr-state'].textContent).toContain('思考翻译已关闭');
+  return vm.runInContext('loadTranslation({ keepDraft: true })', context).then(() => {
+    // The unsaved form survives, and only the runtime line follows the host.
+    expect(fields['tr-provider'].value).toBe('custom');
+    expect(fields['tr-language'].value).toBe('en');
+    expect(fields['tr-endpoint'].value).toBe('https://translator.example.invalid/v1/chat/completions');
+    expect(fields['tr-keyenv'].value).toBe('SYNTHETIC_TRANSLATION_KEY');
+    expect(vm.runInContext('translationData.revision', context)).toBe('tr-2');
+    expect(fields['tr-state'].textContent).toContain('翻译引擎已接入');
+  });
+});
+
+test('the translation form offers no credential input and states the real scope', () => {
+  const source = fs.readFileSync(new URL('./ui/service.html', import.meta.url), 'utf8');
+  expect(source).toContain('id="tr-enabled"');
+  expect(source).toContain('id="tr-provider"');
+  expect(source).toContain('id="tr-language"');
+  expect(source).toContain('id="tr-view"');
+  expect(source).toContain('id="tr-endpoint"');
+  expect(source).toContain('id="tr-model"');
+  expect(source).toContain('id="tr-keyenv"');
+  expect(source).toContain('保存翻译设置');
+  expect(source).toContain('放弃翻译修改');
+  expect(source).toContain('Chat 和 Work 里已展开的可见思考');
+  expect(source).toContain('翻译失败时保留原文');
+  // Only the variable name is editable; no password field, no key value.
+  expect(source).not.toContain('type="password"');
+  expect(source).not.toContain('id="tr-key"');
+  expect(source).not.toContain('apiKey"');
+  // The section keeps the panel's own accessibility labels and layout hooks.
+  expect(source).toContain('aria-labelledby="translation-title"');
+  expect(source).toContain('<label for="tr-provider">');
+  // Its script is still a valid module in a browser-like scope.
+  expect(() => new vm.Script(source.slice(source.indexOf('<script>') + 8, source.lastIndexOf('</script>')))).not.toThrow();
+});
+
+// The desktop runtime's bridge-takeover window reports `active` with
+// `shared: true`, which only proves Kimi is reachable through the pipe. The
+// page must not present that as translation being attached — nor as proof it
+// is not — and a saved `enabled: false` must still read as off.
+test('a shared host connection is never shown as translation attached, and off stays off', () => {
+  const source = fs.readFileSync(new URL('./ui/service.html', import.meta.url), 'utf8');
+  const fields = {
+    'tr-enabled': { checked: true }, 'tr-provider': { value: 'bing' }, 'tr-language': { value: 'zh' },
+    'tr-view': { value: 'translated' }, 'tr-endpoint': { value: '' }, 'tr-model': { value: '' },
+    'tr-keyenv': { value: 'KIMI_WORK_TRANSLATION_API_KEY' }, 'tr-custom': { hidden: true },
+    'tr-provider-hint': { textContent: '' }, 'tr-save': { disabled: false }, 'tr-reset': { disabled: false },
+    'tr-draft': { textContent: '' }, 'tr-state': { textContent: '', dataset: {} },
+  };
+  const base = { enabled: true, provider: 'bing', targetLanguage: 'zh', view: 'translated',
+    customEndpoint: '', customModel: '', apiKeyEnv: 'KIMI_WORK_TRANSLATION_API_KEY' };
+  const context = vm.createContext({ $: id => fields[id], ready: true, translationSaving: false,
+    translationData: { revision: 'tr-1', settings: base, status: { state: 'active', shared: true } },
+    translationBase: base });
+  vm.runInContext(source.slice(source.indexOf('const TR_STATES ='), source.indexOf('async function saveTranslation(')), context);
+  vm.runInContext('translationRenderState()', context);
+  const shared = fields['tr-state'].textContent;
+  expect(shared).toContain('尚未确认');
+  expect(shared).not.toContain('翻译引擎已接入');
+  expect(shared).not.toContain('未接入');
+  expect(fields['tr-state'].dataset.error).toBe('false');
+  // A real receipt from the host (no shared pickup) with no per-surface data
+  // yet: the engine is running, the page is not confirmed. That is all it says.
+  vm.runInContext('translationData = { revision: "tr-1", settings: translationBase, status: { state: "active" } }', context);
+  vm.runInContext('translationRenderState()', context);
+  expect(fields['tr-state'].textContent).toContain('翻译引擎已接入，页面尚未确认');
+  expect(fields['tr-state'].textContent).not.toContain('已翻译');
+  // Turning translation off is reported as off, whatever the host state was.
+  vm.runInContext('translationData = { revision: "tr-1", settings: { ...translationBase, enabled: false }, status: { state: "disabled" } }', context);
+  vm.runInContext('translationRenderState()', context);
+  expect(fields['tr-state'].textContent).toContain('思考翻译已关闭');
+  expect(fields['tr-state'].textContent).not.toContain('已接入');
+});
+
+// Chat and Work are separate pages with separate evidence. The line has to
+// keep three facts apart: no reasoning block on screen, a structure that no
+// longer matches, and a structure that matches — the last one still only
+// proves the selectors line up, never that a translation finished.
+test('the page reports each surface\'s block counts without claiming a finished translation', () => {
+  const source = fs.readFileSync(new URL('./ui/service.html', import.meta.url), 'utf8');
+  const fields = {
+    'tr-enabled': { checked: true }, 'tr-provider': { value: 'bing' }, 'tr-language': { value: 'zh' },
+    'tr-view': { value: 'translated' }, 'tr-endpoint': { value: '' }, 'tr-model': { value: '' },
+    'tr-keyenv': { value: 'KIMI_WORK_TRANSLATION_API_KEY' }, 'tr-custom': { hidden: true },
+    'tr-provider-hint': { textContent: '' }, 'tr-save': { disabled: false }, 'tr-reset': { disabled: false },
+    'tr-draft': { textContent: '' }, 'tr-state': { textContent: '', dataset: {} },
+  };
+  const base = { enabled: true, provider: 'bing', targetLanguage: 'zh', view: 'translated',
+    customEndpoint: '', customModel: '', apiKeyEnv: 'KIMI_WORK_TRANSLATION_API_KEY' };
+  const context = vm.createContext({ $: id => fields[id], ready: true, translationSaving: false,
+    translationData: { revision: 'tr-1', settings: base, status: { state: 'active' } }, translationBase: base });
+  vm.runInContext(source.slice(source.indexOf('const TR_STATES ='), source.indexOf('async function saveTranslation(')), context);
+  const render = status => {
+    context.translationData = { revision: 'tr-1', settings: base, status };
+    vm.runInContext('translationRenderState()', context);
+    return fields['tr-state'].textContent;
+  };
+
+  const empty = render({ state: 'active', surfaces: { chat: { state: 'active', structure: 'none', blocks: 0, seenBlocks: 0 } } });
+  expect(empty).toContain('Chat：页面上暂无思考块（0/0 段）');
+  expect(empty).not.toContain('已翻译');
+
+  const drifted = render({ state: 'active', surfaces: { chat: { state: 'active', structure: 'partial', blocks: 1, seenBlocks: 3 } } });
+  expect(drifted).toContain('Chat：部分思考块结构不匹配（1/3 段）');
+  expect(drifted).toContain('可能与该界面版本不符');
+
+  const matched = render({ state: 'active', surfaces: {
+    work: { state: 'active', structure: 'matched', blocks: 2, seenBlocks: 2 },
+    chat: { state: 'active', structure: 'none', blocks: 0, seenBlocks: 0 } } });
+  expect(matched).toContain('Work：思考块结构匹配（2/2 段）');
+  expect(matched).toContain('Chat：页面上暂无思考块（0/0 段）');
+  expect(matched.indexOf('Work：')).toBeLessThan(matched.indexOf('Chat：'));
+  expect(matched).not.toContain('已翻译');
+  expect(fields['tr-state'].dataset.error).toBe('false');
+
+  // A surface that is not attached, or whose injection failed, says so; the
+  // aggregate state does not hide it.
+  const failed = render({ state: 'active', surfaces: { work: { state: 'failed', structure: 'partial', blocks: 1, seenBlocks: 4 } } });
+  expect(failed).toContain('Work：页面接入失败，保留原文');
+  const inactive = render({ state: 'active', surfaces: { chat: { state: 'inactive' } } });
+  expect(inactive).toContain('Chat：页面未接入翻译宿主');
+  const legacy = render({ state: 'active', surfaces: { work: { state: 'legacy-running' } } });
+  expect(legacy).toContain('Work：另一份翻译仍在该页面运行');
+
+  // A saved "off" wins over a stale active receipt, surfaces included.
+  context.translationData = { revision: 'tr-1', settings: { ...base, enabled: false },
+    status: { state: 'active', surfaces: { chat: { state: 'active', structure: 'matched', blocks: 1, seenBlocks: 1 } } } };
+  vm.runInContext('translationRenderState()', context);
+  expect(fields['tr-state'].textContent).toContain('思考翻译已关闭');
+  expect(fields['tr-state'].textContent).not.toContain('Chat：');
+
+  // A real per-surface report outranks the shared pickup: surfaces are
+  // evidence this settings' engine reached the page, which `shared` never was.
+  const sharedWithSurfaces = render({ state: 'active', shared: true,
+    surfaces: { chat: { state: 'active', structure: 'matched', blocks: 1, seenBlocks: 1 } } });
+  expect(sharedWithSurfaces).toContain('Chat：思考块结构匹配（1/1 段）');
+  expect(sharedWithSurfaces).not.toContain('尚未确认');
+
+  // A host that reports no surfaces at all (an older core) keeps the previous
+  // single-line answer instead of inventing per-page detail.
+  context.translationData = { revision: 'tr-1', settings: base, status: { state: 'inactive', reason: 'translation_waiting_work_view' } };
+  vm.runInContext('translationRenderState()', context);
+  expect(fields['tr-state'].textContent).not.toContain('Work：');
+  expect(fields['tr-state'].textContent).toContain('尚未打开可翻译的思考区');
+});

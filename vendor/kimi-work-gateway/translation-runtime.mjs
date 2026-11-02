@@ -54,6 +54,31 @@ export function readTranslationSettings(file, homeDir) {
 
 const resolvePath = (value, platform) => (platform === 'win32' ? path.win32 : path).resolve(value);
 
+// The per-surface counts are the only thing that separates "no reasoning block
+// is on screen" from "the selectors no longer match this build". They are
+// re-derived field by field from an allowlist rather than passed through, so a
+// receipt written by another version can never inject arbitrary structure into
+// the panel state.
+const SURFACE_STATES = new Set(['active', 'inactive', 'failed', 'legacy-running']);
+const SURFACE_STRUCTURE = new Set(['none', 'partial', 'matched']);
+export function publicSurfaces(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out = {};
+  for (const name of ['work', 'chat']) {
+    const entry = value[name];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const state = SURFACE_STATES.has(entry.state) ? entry.state : undefined;
+    if (!state) continue;
+    const blocks = Number.isInteger(entry.blocks) && entry.blocks >= 0 ? entry.blocks : undefined;
+    const seenBlocks = Number.isInteger(entry.seenBlocks) && entry.seenBlocks >= 0 ? entry.seenBlocks : undefined;
+    out[name] = { state,
+      ...(SURFACE_STRUCTURE.has(entry.structure) ? { structure: entry.structure } : {}),
+      ...(blocks === undefined ? {} : { blocks }),
+      ...(seenBlocks === undefined ? {} : { seenBlocks }) };
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 // Installation identity is what decides whether a supervised restart is an
 // update or a plain re-open. It deliberately keeps the version string as one
 // component among path/mtime/size rather than as a gate: a rebuilt build at the
@@ -255,7 +280,8 @@ export class TranslationRuntime {
       }
       const info = { ...(typeof receipt.version === 'string' ? { version: receipt.version } : {}),
         ...(Number.isInteger(receipt.pid) ? { pid: receipt.pid } : {}),
-        ...(typeof receipt.reason === 'string' && /^[a-z][a-z0-9_-]{0,100}$/.test(receipt.reason) ? { reason: receipt.reason } : {}) };
+        ...(typeof receipt.reason === 'string' && /^[a-z][a-z0-9_-]{0,100}$/.test(receipt.reason) ? { reason: receipt.reason } : {}),
+        ...(publicSurfaces(receipt.surfaces) ? { surfaces: publicSurfaces(receipt.surfaces) } : {}) };
       if (this.isAlive(receipt.pid) && receipt.state !== 'exited') {
         const age = Date.now() - receipt.at;
         if (!Number.isFinite(age) || age < 0 || age > 15000) return { ...info, state: 'stale' };

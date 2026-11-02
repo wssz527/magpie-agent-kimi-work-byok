@@ -1,6 +1,6 @@
 {
   "name": "magpie-agent-kimi-work-byok",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Magpie Agent plugin for Kimi Work's native third-party model selector on macOS and Windows, built on the shared kimi-work-gateway core.",
   "type": "module",
   "main": "./index.mjs",
@@ -28,6 +28,8 @@
     "magpie-backend.mjs",
     "native-byok.mjs",
     "native-controller.mjs",
+    "native-translation.mjs",
+    "native-translation.test.mjs",
     "work-panel.mjs",
     "work-panel.test.mjs",
     "work-settings.mjs",

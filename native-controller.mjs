@@ -4,6 +4,7 @@ import { KimiAdapter } from './adapter.mjs';
 import { NativeByokGateway } from './native-byok.mjs';
 import { NativeSetupProbe } from './native-status.mjs';
 import { NativeSubagents } from './native-subagents.mjs';
+import { NativeTranslation } from './native-translation.mjs';
 import { WorkPanel } from './work-panel.mjs';
 import { WorkSettings } from './work-settings.mjs';
 import { NativeWorkIntegration, NativeModelImport, NativeOnboarding, NativeDesktopRuntime,
@@ -26,6 +27,7 @@ export class LocalKimiAdapter extends KimiAdapter {
     this.workSettingsStore = new WorkSettings({ stateDir: this.stateDir });
     this.desktop = options.desktopRuntime || new NativeDesktopRuntime({ stateDir: this.stateDir, kimiDir: this.kimiDir,
       gatewayBusy: () => this.nativeGateway?.inflight?.size ?? 0 });
+    this.translation = new NativeTranslation({ desktop: this.desktop, env: options.translationEnv });
     this.nativeImport = new NativeModelImport({ stateDir: this.stateDir, kimiDir: this.kimiDir,
       getContext: options.nativeContext, getToken: () => this.nativeGateway.connection?.key,
       ensureRuntime: () => this.ensureNativeDesktop() });
@@ -69,6 +71,21 @@ export class LocalKimiAdapter extends KimiAdapter {
   }
 
   workSettings() { return this.workSettingsStore.snapshot(); }
+
+  // Reasoning translation is the embedded host's own settings file, not a
+  // second store: reading it never writes, so an installation that never
+  // configured translation is reported as off and left untouched.
+  translationSettings() { return this.translation.read(); }
+
+  saveTranslationSettings(input) {
+    if (this.stopping) throw Object.assign(Error('translation_settings_stopping'), { status: 503 });
+    // The owner check comes before the write for the same reason the model
+    // settings check it: a second plugin host must not overwrite this one.
+    if (!this.ownLock()) throw Object.assign(Error('translation_settings_owner_conflict'), { status: 409 });
+    return this.translation.save(input);
+  }
+
+  translationStatus() { return this.translation.status(); }
 
   async saveWorkSettings(input) {
     if (this.stopping) throw Object.assign(Error('work_settings_stopping'), { status: 503 });

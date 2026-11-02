@@ -106,7 +106,7 @@ test('the vendored index is an allowlist projection that keeps its source hash',
   const { record } = verifyCore();
   // Pinned on purpose: a vendor copy that silently changes core version is a
   // release that was not reviewed. Update this line when syncing a new core.
-  expect(record.version).toBe('0.8.0');
+  expect(record.version).toBe('0.9.0');
   expect(record.commit).toMatch(/^[0-9a-f]{40}$/);
   const projection = record.projection['index.mjs'];
   expect(projection.mode).toBe(INDEX_PROJECTION);
