@@ -123,6 +123,88 @@ test('native connection retry is authenticated and returns without waiting for s
   expect(body.connection).toMatchObject({ retryAvailable: true, imported: false, reason: 'native_import_waiting_login' });
 });
 
+// The one-click revoke is the only setup action this page may start, so the
+// endpoint takes a bare receipt and refuses everything else before the
+// adapter is reached at all.
+test('the DNS revoke endpoint takes only a receipt and reaches the adapter once per click', async () => {
+  const requests = [];
+  const { panel } = fixture({ revokeNativeDNS: async request => { requests.push(request); return { action: 'remove-dns', state: 'running' }; } });
+  await serve(panel);
+  const call = (body, extra = {}) => request(panel, { path: '/api/setup', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kimi-Panel-Token': panel.token, ...extra }, body: JSON.stringify(body) });
+  const receipt = { id: 'dns-revoke-' + 'a'.repeat(32), at: Date.now() };
+  expect((await call({ ...receipt }, { 'X-Kimi-Panel-Token': 'x'.repeat(64) })).status).toBe(401);
+  expect(requests).toHaveLength(0);
+  expect((await request(panel, { path: '/api/setup', headers: { 'X-Kimi-Panel-Token': panel.token } })).status).toBe(405);
+  expect((await call({ ...receipt, action: 'prepare' })).status).toBe(400);
+  expect((await call({ id: 'short', at: Date.now() })).status).toBe(400);
+  expect((await call({ id: receipt.id })).status).toBe(400);
+  expect((await call({ id: receipt.id, at: 'now' })).status).toBe(400);
+  expect((await call({ at: Date.now() })).status).toBe(400);
+  expect((await call({ ...receipt, token: 'leak' })).status).toBe(400);
+  expect(requests).toHaveLength(0);
+  const accepted = await call(receipt);
+  expect(accepted.status).toBe(202);
+  expect(JSON.parse(accepted.text)).toEqual({ ok: true, revoke: { action: 'remove-dns', state: 'running' } });
+  expect(requests).toHaveLength(1);
+  expect(requests[0].id).toMatch(/^dns-revoke-/);
+});
+
+// A revoke in progress answers a repeat with the run itself: the second
+// click must never queue a second administrator prompt, and it observes the
+// run rather than being refused as a save.
+test('a revoke repeated while running is answered with the run, and its state reaches /api/state', async () => {
+  let release;
+  const seen = [];
+  const pending = new Promise(resolve => { release = resolve; });
+  const { panel } = fixture({ revokeNativeDNS: request => {
+    seen.push(request);
+    return pending.then(() => ({ action: 'remove-dns', state: 'running' }));
+  } });
+  await serve(panel);
+  const call = body => request(panel, { path: '/api/setup', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kimi-Panel-Token': panel.token }, body: JSON.stringify(body) });
+  const first = call({ id: 'dns-revoke-' + 'a'.repeat(32), at: Date.now() });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(seen).toHaveLength(1);
+  // A click while the revoke is still running observes the same run: it is
+  // answered as running, never as a busy save and never as a second run.
+  const repeat = await call({ id: 'dns-revoke-' + 'b'.repeat(32), at: Date.now() });
+  expect(repeat.status).toBe(202);
+  expect(JSON.parse(repeat.text).revoke).toEqual({ action: 'remove-dns', state: 'running' });
+  expect(seen).toHaveLength(1);
+  // The run settles before the fixture's server is stopped, so no request
+  // is left hanging when afterEach closes the sockets.
+  release();
+  expect((await first).status).toBe(202);
+  expect(JSON.parse((await first).text).revoke).toEqual({ action: 'remove-dns', state: 'running' });
+});
+
+test('without a revoke callback the endpoint reports the code instead of guessing', async () => {
+  const { panel } = fixture({ revokeNativeDNS: undefined });
+  await serve(panel);
+  const response = await request(panel, { path: '/api/setup', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kimi-Panel-Token': panel.token },
+    body: JSON.stringify({ id: 'dns-revoke-' + 'a'.repeat(32), at: Date.now() }) });
+  expect(response.status).toBe(503);
+  expect(JSON.parse(response.text).error.code).toBe('dns_revoke_unavailable');
+  const failing = fixture({ revokeNativeDNS: async () => { throw Object.assign(Error('dns_revoke_owner_conflict'), { status: 409 }); } });
+  await serve(failing.panel);
+  const refused = await request(failing.panel, { path: '/api/setup', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kimi-Panel-Token': failing.panel.token },
+    body: JSON.stringify({ id: 'dns-revoke-' + 'a'.repeat(32), at: Date.now() }) });
+  expect(refused.status).toBe(409);
+  expect(JSON.parse(refused.text).error.code).toBe('dns_revoke_owner_conflict');
+  const raw = fixture({ revokeNativeDNS: async () => { throw Error('raw resolver path /etc/resolver/dev.msh.team'); } });
+  await serve(raw.panel);
+  const unknown = await request(raw.panel, { path: '/api/setup', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Kimi-Panel-Token': raw.panel.token },
+    body: JSON.stringify({ id: 'dns-revoke-' + 'a'.repeat(32), at: Date.now() }) });
+  expect(unknown.status).toBe(503);
+  expect(JSON.parse(unknown.text).error.code).toBe('dns_revoke_unavailable');
+  expect(unknown.text).not.toContain('/etc/resolver');
+});
+
 test('legacy remote evidence is not published as current desktop or phone support', async () => {
   const { panel } = fixture({ desktop: { inspect: () => ({ state: 'active', enabled: true, version: '3.2.21',
     secret: 'synthetic-desktop-secret',
@@ -378,6 +460,139 @@ test('the settings page states the official desktop boundary without promising p
   expect(source).not.toContain('function renderRemote(');
   expect(source).not.toContain('远程 companion');
   expect(source).not.toContain('远程目录响应已追加');
+});
+
+// The revoke row must say what it removes and what it leaves alone, arm
+// only through an inline confirmation, and show the run's own final state
+// rather than merely that a click landed.
+test('the DNS revoke row confirms inline, states its scope and reports the final state', async () => {
+  const source = fs.readFileSync(new URL('./ui/service.html', import.meta.url), 'utf8');
+  expect(source).toContain('撤销本机 DNS 解析');
+  expect(source).toContain('确认撤销');
+  expect(source).toContain('不删除 Kimi 账号、profile 或隐藏入口，不会停用插件');
+  const fields = {
+    'revoke-box': { hidden: true }, 'dns-revoke': { hidden: false, disabled: false },
+    'dns-revoke-confirm': { hidden: true, disabled: false },
+    'dns-revoke-cancel': { hidden: true, disabled: false },
+    'dns-revoke-note': { textContent: '', dataset: {} },
+  };
+  const context = vm.createContext({ $: id => fields[id], ready: true, data: { connection: {} } });
+  vm.runInContext(source.slice(source.indexOf('const REVOKE_STATES ='), source.indexOf('function paint(theme)')), context);
+  vm.runInContext(source.slice(source.indexOf('let revoking = false'), source.indexOf('async function loadTranslation(')), context);
+  vm.runInContext('revokeRender()', context);
+  // Ready without any revoke state: the row is visible now, and the button
+  // is the first-time user's entry point.
+  expect(fields['revoke-box'].hidden).toBe(false);
+  expect(fields['dns-revoke'].disabled).toBe(false);
+  vm.runInContext('data = { connection: { dnsRevoke: { action: "remove-dns", state: "done" } } }; revokeRender()', context);
+  expect(fields['revoke-box'].hidden).toBe(false);
+  expect(fields['dns-revoke-note'].textContent).toContain('已撤销本插件的单域名 DNS 解析');
+  expect(fields['dns-revoke-note'].dataset.ok).toBe('true');
+  vm.runInContext('data = { connection: { dnsRevoke: { action: "remove-dns", state: "running" } } }; revokeRender()', context);
+  expect(fields['dns-revoke-note'].textContent).toContain('正在撤销');
+  expect(fields['dns-revoke'].disabled).toBe(true);
+  vm.runInContext('data = { connection: { dnsRevoke: { action: "remove-dns", state: "failed" } } }; revokeRender()', context);
+  expect(fields['dns-revoke-note'].dataset.error).toBe('true');
+  vm.runInContext('data = { connection: {} }; askRevoke(true)', context);
+  expect(fields['dns-revoke-confirm'].hidden).toBe(false);
+  expect(fields['dns-revoke-cancel'].hidden).toBe(false);
+  expect(fields['dns-revoke-note'].textContent).toContain('单域名解析');
+  // The script that arms, confirms and posts the revoke is the same module,
+  // and it still parses in a browser-like scope.
+  expect(() => new vm.Script(source.slice(source.indexOf('<script>') + 8, source.lastIndexOf('</script>')))).not.toThrow();
+});
+
+// The previous two findings were both missed because every render assertion
+// ran a mock render(): only the page's own render() shows whether the save
+// button is ever re-enabled and whether a first-time user can see the
+// revoke row at all. The stub DOM starts from the markup, exactly as the
+// browser does: `disabled`/`hidden` attributes are already set.
+test('the page\'s real render enables the save button and shows the revoke row', async () => {
+  const source = fs.readFileSync(new URL('./ui/service.html', import.meta.url), 'utf8');
+  const script = source.slice(source.indexOf('<script>') + 8, source.lastIndexOf('</script>'));
+  // The element stub reproduces the initial attributes from the markup: a
+  // browser starts `save`, `main-apply`, `connect` and `dns-revoke`
+  // disabled, and `revoke-box` and the confirm/cancel pair hidden.
+  const initial = {
+    save: { disabled: true }, 'main-apply': { disabled: true }, connect: { disabled: true },
+    reset: { disabled: false }, 'dns-revoke': { disabled: true }, 'revoke-box': { hidden: true },
+    'dns-revoke-confirm': { hidden: true, disabled: true }, 'dns-revoke-cancel': { hidden: true, disabled: true },
+    'tr-custom': { hidden: true }, 'tr-save': { disabled: true }, 'tr-reset': { disabled: true },
+    effort: { options: [] }, 'main-model': { options: [] },
+  };
+  const elements = new Map();
+  const element = id => {
+    if (!elements.has(id)) elements.set(id, { id, disabled: false, hidden: false, value: '', checked: false,
+      textContent: '', maxLength: 0, placeholder: '', type: '', className: '', children: [], options: [],
+      dataset: {}, classList: { toggle() {} }, style: {},
+      addEventListener() {}, append(...rows) { this.children.push(...rows); },
+      replaceChildren(...rows) { this.children = rows; this.options = rows.filter(row => row.value !== undefined); },
+      add(option) { this.options.push(option); this.children.push(option); },
+      setAttribute() {}, getAttribute: () => null,
+      querySelector(selector) { return selector.includes('checkbox') ? { checked: false } : { value: '' }; },
+      getBoundingClientRect: () => ({ height: 0 }), ...structuredClone(initial[id] || {}) });
+    return elements.get(id);
+  };
+  const posts = [];
+  const responses = [];
+  const document = { getElementById: element,
+    createElement: tag => element('created-' + tag + '-' + elements.size),
+    documentElement: { dataset: {}, getBoundingClientRect: () => ({ height: 0 }) } };
+  const context = vm.createContext({
+    document, parent: { postMessage: (...args) => posts.push(args) },
+    addEventListener() {}, setInterval() {}, clearInterval() {},
+    ResizeObserver: class { observe() {} disconnect() {} },
+    location: { hash: '' }, fetch: async (path, init) => {
+      const body = JSON.parse((await responses.at(-1)) ?? '{}');
+      return { ok: true, json: async () => body };
+    }, AbortSignal: { timeout: () => null },
+    crypto: { randomUUID: () => 'synthetic-uuid-for-revoke' },
+    Option: class { constructor(text, value) { this.text = text; this.value = value ?? text; } },
+    visibilityState: 'visible', console,
+    window: null,
+  });
+  // The startup lines run load()/loadTranslation() on their own; the test
+  // drives them explicitly instead so each state is awaited in order.
+  const boot = script.slice(0, script.indexOf('load().catch(failure'));
+  vm.runInContext(boot, context);
+  const healthy = { at: Date.now(), settings: 'available', revision: 'rev-1',
+    models: [{ id: 'lab/child', name: 'Child', tools: true, reasoningEfforts: ['low'] },
+      { id: 'lab/other', name: 'Other', tools: true, reasoningEfforts: [] }],
+    subagents: { mode: 'inherit', transport: 'native-config' },
+    connection: { state: 'ready', imported: true, retryAvailable: true } };
+  responses.push(JSON.stringify(healthy));
+  await vm.runInContext('load()', context);
+  expect(element('save').disabled).toBe(false);
+  expect(element('main-apply').disabled).toBe(false);
+  // A first-time user has no revoke state yet: the row is the entry point,
+  // so it must be visible and the button usable.
+  expect(element('revoke-box').hidden).toBe(false);
+  expect(element('dns-revoke').disabled).toBe(false);
+  vm.runInContext('askRevoke(true)', context);
+  expect(element('dns-revoke-confirm').hidden).toBe(false);
+  vm.runInContext('askRevoke(false)', context);
+  // A settled run keeps the row observable, and the button stays usable for
+  // a revoke that may be needed again. The state is set the way the page
+  // itself sets it — an assignment inside the page's own scope — so the
+  // real render() runs over it.
+  vm.runInContext(`data = { ...data, connection: { ...data.connection,
+    dnsRevoke: { action: 'remove-dns', state: 'done' } } }; revokeRender()`, context);
+  expect(element('revoke-box').hidden).toBe(false);
+  expect(element('dns-revoke-note').textContent).toContain('已撤销本插件的单域名 DNS 解析');
+  expect(element('dns-revoke-note').dataset.ok).toBe('true');
+  expect(element('dns-revoke').disabled).toBe(false);
+  vm.runInContext(`data = { ...data, connection: { ...data.connection,
+    dnsRevoke: { action: 'remove-dns', state: 'failed' } } }; revokeRender()`, context);
+  expect(element('dns-revoke-note').dataset.error).toBe('true');
+  expect(element('dns-revoke').disabled).toBe(false);
+  // A run in progress re-disables the button, as does a lost session.
+  vm.runInContext(`data = { ...data, connection: { ...data.connection,
+    dnsRevoke: { action: 'remove-dns', state: 'running' } } }; revokeRender()`, context);
+  expect(element('dns-revoke').disabled).toBe(true);
+  await vm.runInContext('disconnected({ code: "unauthorized" })', context);
+  expect(element('revoke-box').hidden).toBe(false);
+  expect(element('dns-revoke').disabled).toBe(true);
+  expect(element('save').disabled).toBe(true);
 });
 
 test('a changed runtime publication preserves the complete unsaved pool and its original revision', async () => {

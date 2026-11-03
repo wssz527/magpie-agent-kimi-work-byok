@@ -189,14 +189,47 @@ export class TranslationRuntime {
     this.settings = normalizeTranslationConfig();
   }
 
-  configure(value) {
+  // The optional expectedRevision turns the settings save into a compare-and-
+  // swap. The token is opaque: the digest of the whole on-disk document as
+  // produced by currentDocumentRevision, not the revision field stored inside
+  // it — that field digests the payload and says nothing about what the file
+  // holds now. `null` addresses a missing file. The write re-derives the
+  // current token from the file right before the rename, so a save based on a
+  // stale view fails with `translation_settings_conflict` instead of
+  // overwriting another process's change. Without the option the historical
+  // last-writer-wins behaviour is kept for old callers.
+  configure(value, { expectedRevision } = {}) {
     const settings = normalizeTranslationConfig(value);
     const desired = { schemaVersion: 1, homeDir: this.homeDir, settings,
       revision: translationRevision(settings, this.homeDir) };
-    let previous;
-    try { previous = readTranslationSettings(this.settingsFile, this.homeDir); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (previous?.revision !== desired.revision) writeSubagentJSON(this.settingsFile, desired);
+    if (expectedRevision === undefined) {
+      let previous;
+      try { previous = readTranslationSettings(this.settingsFile, this.homeDir); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (previous?.revision !== desired.revision) writeSubagentJSON(this.settingsFile, desired);
+      return this.adopt(settings);
+    }
+    let current;
+    try {
+      // Normalized exactly as every reader normalizes it, so an idempotent
+      // retry of the settings already on disk stays a no-op. A file whose
+      // content fails that validation is hostile state, not a writable base.
+      current = readTranslationSettings(this.settingsFile, this.homeDir);
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        throw error.message === 'translation_settings_conflict' || error.message === 'translation_scope_conflict'
+          ? Error('translation_settings_conflict') : error;
+      }
+    }
+    if (current?.revision === desired.revision) return this.adopt(settings);
+    // The caller's token is never taken as the current state: the write below
+    // re-derives it from the file right before the rename, and only that
+    // freshly-read value decides whether the save may proceed.
+    writeSubagentJSON(this.settingsFile, desired, expectedRevision);
+    return this.adopt(settings);
+  }
+
+  adopt(settings) {
     this.settings = settings;
     return settings;
   }

@@ -8,7 +8,8 @@ import { WorkPanel } from './work-panel.mjs';
 import { normalizeTranslationConfig, TRANSLATION_DEFAULTS }
   from './vendor/kimi-work-gateway/translation-config.mjs';
 import { translationRevision } from './vendor/kimi-work-gateway/translation-runtime.mjs';
-import { readSubagentJSON } from './vendor/kimi-work-gateway/subagent-policy.mjs';
+import { currentDocumentRevision, readSubagentJSON, writeSubagentJSON }
+  from './vendor/kimi-work-gateway/subagent-policy.mjs';
 
 const roots = [], running = [];
 const settingsFile = root => path.join(root, 'translation-settings.json');
@@ -23,8 +24,8 @@ function fixture({ stored, homeDir, env = {} } = {}) {
   const calls = { configure: [], inspect: 0 };
   const desktop = {
     inspect: () => { calls.inspect++; return runtimeState.value; },
-    configure(settings) {
-      calls.configure.push(settings);
+    configure(settings, options) {
+      calls.configure.push([settings, options]);
       if (runtimeState.failure) throw runtimeState.failure;
       const normalized = normalizeTranslationConfig(settings);
       fs.writeFileSync(settingsFile(root), JSON.stringify({ schemaVersion: 1,
@@ -40,6 +41,7 @@ function fixture({ stored, homeDir, env = {} } = {}) {
         if (value.revision !== translationRevision(settings, value.homeDir)) throw Error('translation_settings_conflict');
         return { ...value, settings };
       },
+      get settingsFile() { return settingsFile(root); },
     },
   };
   if (stored !== undefined) {
@@ -105,11 +107,17 @@ test('an existing standalone configuration is read as it is and never rewritten 
 test('a save writes exactly the reviewed revision through the embedded runtime', () => {
   const f = fixture({ stored: { enabled: false, provider: 'bing' } });
   const first = f.translation.read();
+  // The token the page saw is the whole-document one the CAS write needs —
+  // it differs from the payload revision stored inside the file.
+  const storedDocument = JSON.parse(fs.readFileSync(settingsFile(f.root), 'utf8'));
+  expect(first.revision).toEqual(currentDocumentRevision(settingsFile(f.root)));
+  expect(first.revision).not.toEqual(storedDocument.revision);
   const saved = f.translation.save({ revision: first.revision, settings: custom });
   expect(saved.settings).toEqual(custom);
   expect(saved.revision).not.toBe(first.revision);
+  expect(saved.revision).toEqual(currentDocumentRevision(settingsFile(f.root)));
   expect(f.calls.configure).toHaveLength(1);
-  expect(f.calls.configure[0]).toEqual(custom);
+  expect(f.calls.configure[0]).toEqual([custom, { expectedRevision: first.revision }]);
   expect(JSON.parse(fs.readFileSync(settingsFile(f.root), 'utf8')).settings).toEqual(custom);
   // The next save needs the revision this one answered with.
   expect(() => f.translation.save({ revision: first.revision, settings: { ...custom, targetLanguage: 'ko' } }))
@@ -117,6 +125,39 @@ test('a save writes exactly the reviewed revision through the embedded runtime',
   expect(f.calls.configure).toHaveLength(1);
   const next = f.translation.save({ revision: saved.revision, settings: { ...custom, targetLanguage: 'ko' } });
   expect(next.settings.targetLanguage).toBe('ko');
+  expect(f.calls.configure[1]).toEqual([{ ...custom, targetLanguage: 'ko' },
+    { expectedRevision: saved.revision }]);
+});
+
+test('a save racing another writer is refused by the runtime token, not by the second read', () => {
+  const f = fixture({ stored: { enabled: false, provider: 'bing' } });
+  const first = f.translation.read();
+  // Another process lands between the page's read and this save: the write
+  // itself must detect the changed document and refuse without touching it.
+  f.desktop.configure({ enabled: true, provider: 'bing' });
+  const after = f.translation.read();
+  let failure;
+  try { f.translation.save({ revision: first.revision, settings: custom }); } catch (error) { failure = error; }
+  expect(failure?.status).toBe(409);
+  expect(failure?.message).toBe('translation_settings_conflict');
+  // The other writer's settings survive untouched.
+  expect(f.translation.read()).toEqual(after);
+  // Presenting the token from after the other write goes through.
+  const saved = f.translation.save({ revision: after.revision, settings: custom });
+  expect(saved.settings).toEqual(custom);
+});
+
+test('a save against a missing file is refused once another process creates it first', () => {
+  const f = fixture();
+  expect(f.translation.read()).toEqual({ revision: null, settings: { ...TRANSLATION_DEFAULTS } });
+  // Another process writes the first configuration before this save lands.
+  f.desktop.configure({ enabled: true, provider: 'bing' });
+  let failure;
+  try { f.translation.save({ revision: null, settings: custom }); } catch (error) { failure = error; }
+  expect(failure?.status).toBe(409);
+  expect(failure?.message).toBe('translation_settings_conflict');
+  const stored = JSON.parse(fs.readFileSync(settingsFile(f.root), 'utf8'));
+  expect(stored.settings.provider).toBe('bing');
 });
 
 test('a stale revision is refused with 409 before anything reaches the runtime', () => {
@@ -128,9 +169,7 @@ test('a stale revision is refused with 409 before anything reaches the runtime',
     expect(failure?.message).toBe('translation_settings_conflict');
   }
   expect(f.calls.configure).toHaveLength(0);
-});
-
-test('invalid settings answer with their own code and never touch the stored file', () => {
+});test('invalid settings answer with their own code and never touch the stored file', () => {
   const f = fixture({ stored: { enabled: false } });
   const revision = f.translation.read().revision;
   const before = fs.readFileSync(settingsFile(f.root), 'utf8');
@@ -326,6 +365,19 @@ test('the controller saves through the embedded host once it owns the lock', asy
     await expect(async () => adapter.saveTranslationSettings({ revision: null, settings: { ...custom, view: 'original' } }))
       .toThrow('translation_settings_conflict');
     expect(adapter.translationSettings().settings).toEqual(custom);
+    // A stale token is refused inside the runtime's compare-and-swap write:
+    // another writer that lands after the page's read wins, and this save
+    // neither overwrites it nor reports the other writer's revision as saved.
+    const fresh = adapter.translationSettings();
+    adapter.desktop.configure({ enabled: false, provider: 'bing' });
+    const other = adapter.translationSettings();
+    expect(other.revision).not.toBe(fresh.revision);
+    let failure;
+    try { adapter.saveTranslationSettings({ revision: fresh.revision, settings: { ...custom, targetLanguage: 'ko' } }); }
+    catch (error) { failure = error; }
+    expect(failure?.status).toBe(409);
+    expect(failure?.message).toBe('translation_settings_conflict');
+    expect(adapter.translationSettings()).toEqual(other);
   } finally {
     adapter.desktop.close();
     fs.rmSync(root, { recursive: true, force: true });

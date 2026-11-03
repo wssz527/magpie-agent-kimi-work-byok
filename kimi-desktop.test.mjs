@@ -377,6 +377,60 @@ test('disconnect restores the address even when Kimi removes a private catalog m
   } finally {await f.cleanup();}
 });
 
+// The one-click revoke goes through the same NativeSetup as the prepare, so
+// its receipt answers a repeated request without a second administrator
+// prompt. The injected setup stands in for the real one: no test touches
+// hosts or a resolver file, and the receipt never carries a path.
+test('one-click DNS revoke runs the fixed remove-dns action once per receipt', async () => {
+  const { LocalKimiAdapter } = await import('./native-controller.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-dns-revoke-'));
+  const runs = [];
+  const nativeSetup = {
+    run(request) {
+      runs.push({ ...request });
+      if (runs.length === 1) return Promise.resolve({ action: request.action, state: 'done' });
+      return Promise.resolve({ action: request.action, state: 'failed' });
+    },
+  };
+  const adapter = new LocalKimiAdapter({ stateDir: path.join(root, 'state'), kimiDir: path.join(root, 'kimi'),
+    flagFile: path.join(root, 'flag.json'), stabilityMs: 0, lookupFn: async () => ({ address: '10.0.0.2' }), nativeSetup });
+  try {
+    adapter.ownLock = () => true;
+    const first = await adapter.revokeNativeDNS({ id: 'dns-revoke-0001', at: Date.now() });
+    expect(first).toEqual({ action: 'remove-dns', state: 'running' });
+    expect(adapter.dnsRevokeStatus()).toEqual({ action: 'remove-dns', state: 'running' });
+    while (adapter.dnsRevokeStatus()?.state === 'running') await new Promise(resolve => setTimeout(resolve, 10));
+    expect(adapter.dnsRevokeStatus()).toEqual({ action: 'remove-dns', state: 'done' });
+    // A second call while the first is still running is folded into it, and
+    // the action is fixed: nothing the caller passes changes what runs.
+    expect(runs[0]).toEqual({ action: 'remove-dns', id: 'dns-revoke-0001', at: expect.any(Number) });
+    await adapter.revokeNativeDNS({ id: 'dns-revoke-0002', at: Date.now() });
+    while (adapter.dnsRevokeStatus()?.state === 'running') await new Promise(resolve => setTimeout(resolve, 10));
+    expect(runs).toHaveLength(2);
+    expect(adapter.dnsRevokeStatus()).toEqual({ action: 'remove-dns', state: 'failed' });
+    // Stopping and a lost ownership never reach the setup.
+    adapter.stopping = true;
+    await expect(async () => adapter.revokeNativeDNS({ id: 'dns-revoke-0003', at: Date.now() }))
+      .toThrow('dns_revoke_stopping');
+    adapter.stopping = false;
+    adapter.ownLock = () => false;
+    await expect(async () => adapter.revokeNativeDNS({ id: 'dns-revoke-0003', at: Date.now() }))
+      .toThrow('dns_revoke_owner_conflict');
+    adapter.ownLock = () => true;
+    // The adapter checks the receipt's types only; the shape the setup
+    // dedupes on is enforced before anything is scheduled.
+    await expect(async () => adapter.revokeNativeDNS()).toThrow('dns_revoke_invalid');
+    await expect(async () => adapter.revokeNativeDNS({ id: 7, at: Date.now() })).toThrow('dns_revoke_invalid');
+    await expect(async () => adapter.revokeNativeDNS({ id: 'dns-revoke-0003' })).toThrow('dns_revoke_invalid');
+    expect(runs).toHaveLength(2);
+    // Whatever the result was, the status never carries a path or message.
+    expect(JSON.stringify(adapter.dnsRevokeStatus())).not.toContain('/');
+  } finally {
+    adapter.desktop.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('loading an agent never installs signal handlers in the shared plugin host', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-empty-host-'));
   const entry = pathToFileURL(fileURLToPath(new URL('./index.mjs', import.meta.url))).href;

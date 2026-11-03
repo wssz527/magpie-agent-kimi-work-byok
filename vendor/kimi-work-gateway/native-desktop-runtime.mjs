@@ -16,7 +16,11 @@ export class NativeDesktopRuntime {
       runtime: this.runtime, gatewayBusy, protectedEnvNames, launchOptions: { controlOnly: true } });
   }
 
-  configure(settings) { return this.runtime.configure(settings); }
+  // The options object is the runtime's own contract and is forwarded as it
+  // is: `{ expectedRevision }` turns the save into a compare-and-swap against
+  // the whole on-disk settings document, and no options keeps the historical
+  // last-writer-wins behaviour every launch and supervisor caller relies on.
+  configure(settings, options) { return this.runtime.configure(settings, options); }
 
   async ensure() {
     if (!this.scopeVerified) return this.inspect();

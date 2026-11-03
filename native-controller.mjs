@@ -36,6 +36,9 @@ export class LocalKimiAdapter extends KimiAdapter {
       syncNative: options.syncNative || (request => this.nativeImport.sync(request)) });
     this.nativeGateway = new NativeByokGateway({ fetchImpl: this.fetchImpl, instructionsFile: this.instructionsFile });
     this.nativeDNS = new NativeByokDNS();
+    this.nativeSetup = options.nativeSetup;
+    this.dnsRevokeTask = null;
+    this.dnsRevokeResult = null;
     this.subagents = new NativeSubagents({ stateDir: this.stateDir, kimiDir: this.kimiDir, runtime: options.subagentRuntime, native: options.nativeSubagents });
     this.nativeGateway.gateway.beforeRequest = (protocol, payload) => this.nativeSubagentInitializing
       ? { status: 503, code: 'subagent_policy_initializing' } : this.subagents.beforeRequest(protocol, payload);
@@ -86,6 +89,40 @@ export class LocalKimiAdapter extends KimiAdapter {
   }
 
   translationStatus() { return this.translation.status(); }
+
+  // One-click teardown of this plugin's own DNS override. The action is
+  // fixed here — the page only sends a fresh receipt id — and the run goes
+  // through the same NativeSetup the prepare used, with the same port read
+  // from the connection file, so the removal compares the resolver (or
+  // hosts) contents that were actually installed and its receipt dedupes a
+  // repeat: an id already answered is answered again, without a second
+  // administrator prompt and without touching anything else on the machine.
+  async revokeNativeDNS(request) {
+    if (this.stopping) throw Object.assign(Error('dns_revoke_stopping'), { status: 503 });
+    if (this.dnsRevokeTask) return { action: 'remove-dns', state: 'running' };
+    if (typeof request?.id !== 'string' || typeof request?.at !== 'number' || !Number.isFinite(request.at)) {
+      throw Object.assign(Error('dns_revoke_invalid'), { status: 400 });
+    }
+    if (!this.ownLock()) throw Object.assign(Error('dns_revoke_owner_conflict'), { status: 409 });
+    this.nativeSetup ||= new NativeSetup({ stateDir: this.stateDir, flagFile: this.nativeProbe.flagFile });
+    let port = BYOK_DNS_PORT;
+    try { port = read(this.connectionFile)?.nativeByok?.dns?.port ?? BYOK_DNS_PORT; } catch { /* The default port it is. */ }
+    const task = this.nativeSetup.run({ action: 'remove-dns', id: request.id, at: request.at }, port)
+      .then(result => { this.dnsRevokeResult = result; })
+      .catch(() => { this.dnsRevokeResult = { action: 'remove-dns', state: 'failed' }; })
+      .finally(() => { if (this.dnsRevokeTask === task) this.dnsRevokeTask = null; this.nativeProbe.cached = null; });
+    this.dnsRevokeTask = task;
+    return { action: 'remove-dns', state: 'running' };
+  }
+
+  // The allowlisted view of the revoke run: its fixed action plus the state
+  // (and stage) the setup recorded. No path, message or platform detail.
+  dnsRevokeStatus() {
+    if (this.dnsRevokeTask) return { action: 'remove-dns', state: 'running' };
+    return this.dnsRevokeResult ? { action: this.dnsRevokeResult.action,
+      state: this.dnsRevokeResult.state,
+      ...(this.dnsRevokeResult.stage ? { stage: this.dnsRevokeResult.stage } : {}) } : null;
+  }
 
   async saveWorkSettings(input) {
     if (this.stopping) throw Object.assign(Error('work_settings_stopping'), { status: 503 });

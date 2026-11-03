@@ -1,5 +1,6 @@
 import { normalizeTranslationConfig, TRANSLATION_DEFAULTS } from './vendor/kimi-work-gateway/translation-config.mjs';
 import { publicSurfaces } from './vendor/kimi-work-gateway/translation-runtime.mjs';
+import { currentDocumentRevision } from './vendor/kimi-work-gateway/subagent-policy.mjs';
 
 // States the embedded runtime and supervisor report. Anything else is shown
 // as unavailable rather than guessed at.
@@ -22,9 +23,13 @@ export class NativeTranslation {
     this.env = env;
   }
 
-  // Desired settings as the host reads them. A missing file is the documented
-  // default (translation off) and is never written by an inspection: an
-  // installation that never configured translation keeps no file at all.
+  // Desired settings as the host reads them. `revision` is the opaque
+  // whole-document token currentDocumentRevision() derives from the settings file
+  // as it exists right now, not the payload revision stored inside the
+  // document — the compare-and-swap token a save must present names the
+  // whole file. A missing file is the documented default (translation off,
+  // revision null) and is never written by an inspection: an installation
+  // that never configured translation keeps no file at all.
   read() {
     let stored;
     try { stored = this.desktop.runtime.desiredSettings(); }
@@ -33,7 +38,7 @@ export class NativeTranslation {
       throw refusal(409, error?.message === 'translation_scope_conflict'
         ? 'translation_scope_conflict' : 'translation_settings_conflict');
     }
-    return { revision: stored.revision, settings: stored.settings };
+    return { revision: currentDocumentRevision(this.desktop.runtime.settingsFile), settings: stored.settings };
   }
 
   save(input) {
@@ -48,15 +53,13 @@ export class NativeTranslation {
     if (input.revision !== current.revision) throw refusal(409, 'translation_settings_conflict');
     let settings;
     try { settings = normalizeTranslationConfig(input.settings); } catch (error) { throw settingsError(error); }
-    // A standalone gateway or a second panel writes the same file, and the
-    // core's configure() is read-check-write without an expected revision, so
-    // this second read can only narrow the race — it is not a CAS. A writer
-    // that lands between this check and the rename still wins as the last
-    // writer; closing that needs an expected-revision parameter in the core,
-    // not a plugin-side lock. Every write stays a complete normalized object,
-    // so the worst case is a lost edit the page can save again.
-    if (this.read().revision !== current.revision) throw refusal(409, 'translation_settings_conflict');
-    try { this.desktop.configure(settings); }
+    // The whole-document token is handed to the embedded runtime, which
+    // re-derives the file's current token right before the rename: a save
+    // racing another writer (a standalone gateway, a second panel) fails with
+    // translation_settings_conflict there instead of silently overwriting
+    // that writer's change. `null` addresses the missing file, so a first
+    // save is refused once another process created the file in the meantime.
+    try { this.desktop.configure(settings, { expectedRevision: current.revision }); }
     catch (error) {
       if (error?.message === 'translation_scope_conflict' || error?.message === 'translation_settings_conflict') {
         throw refusal(409, error.message);

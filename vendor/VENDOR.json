@@ -1,10 +1,10 @@
 {
   "name": "kimi-work-gateway",
   "version": "0.9.0",
-  "commit": "5cbb00d7c3d3fdc94a805bf43a050534e60e8f28",
+  "commit": "934438a457c46b0249b6d317a01db86431ed7aa4",
   "files": {
-    "config.mjs": "ed0a6d30318157fb7f2ff1018a2f52ecaf32aa34d2389f4b2519b859254f7a44",
-    "gateway.mjs": "b1af504d9371b8fd9111f91af4cf4f5232de0e8759cec9c6fc38ae828a0cc53a",
+    "config.mjs": "f3725f549a2373d1dcf682451e9b1fe051e86c92e2321066b3b4c1fae3758191",
+    "gateway.mjs": "84a4399f1609d19e5149b9565525fd448cd3b2b9bbb7ee76a92c7a664bf1eb33",
     "index.mjs": "8272c56536fed6063bf507a2047cc74eaf3b7d3107118f8aaa51ae7e800d19c4",
     "instructions.mjs": "71b9f45b82ed49f5133b75d70185a82e33dd1d901bf2046a214750825b84eaf2",
     "kimi-contract.mjs": "7d4349d3ce5916bdb8d47c866af7b624806c6576b3c85f9447c49dfcc75ac1b2",
@@ -14,9 +14,9 @@
     "native-status.mjs": "7cc166685bef0f81985a8e02ce9a1dfb7484c4817fd00b15f5a04d8471094ccd",
     "native-account-context.mjs": "7b27bcbbb90fd492a2e566f9972d2f6ecfd9147efca5163ee41d1c89b6f63c87",
     "native-work-integration.mjs": "6320a5acbc891d83546b7073495b1dd7a010295c472904f1f194d780fcf2b6d7",
-    "openai-backend.mjs": "0f18652d6af6a2ad4d8612631933076938b1247654d5684194714bb347f5cfef",
+    "openai-backend.mjs": "13d5f8be939861dec137c57b9ff0973eddbbe59ee887263740c98fb05d777d1b",
     "paths.mjs": "2bca4cc95c09c733c2bb97cba23e6ace8167c06ce6a5a447a50477452c530f23",
-    "subagent-policy.mjs": "40d454336c666568681296a7621b3bc77419bb4a5055b31b2d94e88e4418ee0f",
+    "subagent-policy.mjs": "f70d003eaf02a7928984860dcd9b61651e8e6e7c889700873e9bd27cdc01249c",
     "native-subagent-config.mjs": "5feb5fbbd87871632883b492f1d275ff5b1a5c4fc0b6a758ac52337ebf583a48",
     "native-subagent-bridge.mjs": "c1a808f46d0f177a36aed7d9f1cc4048cd7e86c61c8c0fa6090805559038b4df",
     "subagent-hook.mjs": "9e7d943f26b23e0215df4df3bba95a1cecddb19c00efede80b2cf99c72b0eb70",
@@ -27,10 +27,10 @@
     "native-import.mjs": "c57383c2d076d147ddc0268e3cbb8d1cc58e05f9f6791a033e9468839a17d291",
     "native-onboarding.mjs": "863ea00672ca4c84f6e8b987cb600ad12dcb58c24d2c9006509d45ffb3fe17dd",
     "native-desktop-bridge.mjs": "f246c9efa17b41e76413749cd3a5d5bc46b46049da52357680b7a9f8e0ead59d",
-    "native-desktop-runtime.mjs": "2c575b9c5d28f9b3634ea5b09fddc3f4e96227179ab2858f47c8693062d6cde4",
+    "native-desktop-runtime.mjs": "39162f553cfbd2158e1352ce84fea9f4ce65b6cb90de14965369bca1fe7f9208",
     "native-control.mjs": "ee6f3d19bbcded81c59eed01f3059d917c7405d081c15641a66d2f25dfa1981d",
     "native-idle.mjs": "a75806f56f32ea30e87bda43143935bad1601b975c653157bed9b3a75c23203e",
-    "translation-runtime.mjs": "20e6c1ff044f12ef1d524b433d1a966bbb5c11e6232ed4b92205d018a55aa312",
+    "translation-runtime.mjs": "41c3060ce9f1ff7b1475ef31d4d41dfd5f18769e399d2f90c45377575ed4a0d5",
     "translation-host.mjs": "b6da92a4d5adfaad9c9a24d8d84d27ec59f9b4cd488dc8b94125fc39c0d1a514",
     "translation-supervisor.mjs": "c2dc6913176e0f5231d91affb7d3cf00da04f1ca7ab91a58e6dc79a25d624592",
     "translation-pipe.mjs": "cd82be7b2de935a9b9cfe380677fefb32a188b49c11438859e35d3a81d87c744",
@@ -54,9 +54,15 @@
   "projection": {
     "index.mjs": {
       "source": "src/index.mjs",
-      "sourceSha256": "f20e2c9dd7c7ef4ce9a98ba7b1dd2161ac8646741336bcdc313cb694730a5cc1",
+      "sourceSha256": "69721d31a25c10b1ec9aa73ed16a599200b98ee233d54d59f3586938d39511ff",
       "mode": "allowlist-reexports",
       "dropped": [
+        "provider-catalog.mjs",
+        "panel-settings.mjs",
+        "native-context-policy.mjs",
+        "native-mcp-manager.mjs",
+        "panel-controller.mjs",
+        "panel.mjs",
         "native-connection.mjs"
       ]
     }

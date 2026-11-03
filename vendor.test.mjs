@@ -112,7 +112,14 @@ test('the vendored index is an allowlist projection that keeps its source hash',
   expect(projection.mode).toBe(INDEX_PROJECTION);
   expect(projection.source).toBe('src/index.mjs');
   expect(projection.sourceSha256).toMatch(/^[0-9a-f]{64}$/);
-  expect(projection.dropped).toEqual(['native-connection.mjs']);
+  // Pinned on purpose, like the version and source hash above: the plugin
+  // deliberately leaves the panel/CLI surface and the legacy standalone
+  // connection module out of its embedded copy, so a new name here means the
+  // core grew a re-export the plugin must consciously decide about. Update
+  // this list when syncing a reviewed core.
+  expect(projection.dropped).toEqual(['provider-catalog.mjs', 'panel-settings.mjs',
+    'native-context-policy.mjs', 'native-mcp-manager.mjs', 'panel-controller.mjs',
+    'panel.mjs', 'native-connection.mjs']);
   const text = fs.readFileSync(path.join(target, 'index.mjs'), 'utf8');
   expect(projection.sourceSha256).not.toBe(digestText(text));
   for (const name of projection.dropped) expect(text).not.toContain(name);

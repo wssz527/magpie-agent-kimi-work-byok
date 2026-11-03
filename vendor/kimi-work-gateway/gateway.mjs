@@ -1,6 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { once } from 'node:events';
+import { StringDecoder } from 'node:string_decoder';
 import { applySharedInstructions } from './instructions.mjs';
 
 const BODY_LIMIT = 32 * 1024 * 1024;
@@ -8,6 +9,8 @@ const CATALOG_LIMIT = 8 * 1024 * 1024;
 const ALIASES = ['byok-kth-kimi/', 'byok-kth-resp/'];
 const PROTOCOLS = new Set(['chat', 'responses']);
 const DEFAULT_FORWARD_HEADERS = ['x-msh-version', 'r-timezone', 'x-session-id', 'session_id'];
+const METADATA_KINDS = new Set(['preset', 'discovery', 'manual']);
+const METADATA_FIELDS = new Set(['kind', 'url', 'checkedAt']);
 
 function authorized(actual, key) {
   if (typeof key !== 'string' || !key) return false;
@@ -54,6 +57,141 @@ const text = value => typeof value === 'string' && value.length <= 2048 && !/[\x
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const lastSegment = id => id.slice(id.lastIndexOf('/') + 1).toLowerCase();
 
+// Request records are the panel's only telemetry: which route was used, how
+// long it took and what the upstream reported. Nothing here keeps a prompt, a
+// key or a response body, and a number the upstream did not report stays
+// unknown instead of becoming a zero.
+const USAGE_SCAN_LIMIT = 256 * 1024;
+const USAGE_LINE_LIMIT = 64 * 1024;
+
+function count(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function usageOf(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const cached = count(value.prompt_tokens_details?.cached_tokens)
+    ?? count(value.input_tokens_details?.cached_tokens);
+  const usage = {
+    inputTokens: count(value.prompt_tokens) ?? count(value.input_tokens),
+    outputTokens: count(value.completion_tokens) ?? count(value.output_tokens),
+    totalTokens: count(value.total_tokens),
+    cachedInputTokens: cached,
+  };
+  const known = Object.fromEntries(Object.entries(usage).filter(([, number]) => number !== undefined));
+  return Object.keys(known).length ? known : null;
+}
+
+// Both envelope shapes carry the usage inside `usage`; a Responses stream only
+// reports it on the terminal event, so the last one seen wins.
+function usageFromJSON(payload) {
+  return usageOf(payload?.usage) ?? usageOf(payload?.response?.usage);
+}
+
+// A bounded, streaming reader for the real usage numbers. It never buffers the
+// whole response. The two protocols are bounded differently on purpose:
+//
+// - JSON arrives as one document, so a total byte budget is the only bound that
+//   makes sense: past it the metric is dropped, not the reply.
+// - An SSE stream is a sequence of independent events, and the terminal usage
+//   arrives last. Bounding the whole stream would lose the usage of any long but
+//   ordinary answer, so SSE is bounded per event instead: a runaway single line
+//   is skipped up to its newline and scanning resumes with the next event.
+class UsageScanner {
+  constructor(kind) {
+    this.kind = kind;
+    this.decoder = new StringDecoder('utf8');
+    this.remainder = '';
+    this.body = '';
+    this.seen = 0;
+    this.skipping = false;
+    this.usage = null;
+  }
+
+  push(chunk) {
+    if (!this.kind || this.kind === 'json' && this.seen > USAGE_SCAN_LIMIT) return;
+    const value = this.decoder.write(Buffer.from(chunk));
+    if (this.kind === 'json') {
+      this.seen += chunk.length;
+      if (this.seen > USAGE_SCAN_LIMIT) { this.body = ''; return; }
+      this.body += value;
+      return;
+    }
+    this.#lines(this.remainder + value);
+  }
+
+  #lines(value) {
+    const parts = value.split('\n');
+    this.remainder = parts.pop() ?? '';
+    for (const part of parts) {
+      // A line that was cut off mid-way belongs to an event already abandoned;
+      // only the lines after it are real events again.
+      if (this.skipping) { this.skipping = false; continue; }
+      this.#line(part);
+    }
+    // An unfinished line already past the per-event bound is never going to
+    // parse: stop holding it, and resume at the next event boundary.
+    if (this.remainder.length > USAGE_LINE_LIMIT) {
+      this.remainder = '';
+      this.skipping = true;
+    }
+  }
+
+  #line(raw) {
+    const line = raw.trim();
+    if (!line.startsWith('data:')) return;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') return;
+    if (data.length > USAGE_LINE_LIMIT) return;
+    let payload;
+    try { payload = JSON.parse(data); } catch { return; }
+    const usage = usageFromJSON(payload);
+    if (usage) this.usage = usage;
+  }
+
+  finish() {
+    const tail = this.decoder.end();
+    if (this.kind === 'json') {
+      if (this.seen <= USAGE_SCAN_LIMIT && tail) this.body += tail;
+      try { this.usage = usageFromJSON(JSON.parse(this.body)) ?? this.usage; } catch {}
+    } else if (this.kind === 'sse') {
+      const value = this.remainder + tail;
+      if (value && !this.skipping) this.#line(value);
+    }
+    this.body = '';
+    this.remainder = '';
+    this.skipping = false;
+    return this.usage;
+  }
+}
+
+function scannerFor(contentType) {
+  const type = String(contentType || '').toLowerCase();
+  if (type.includes('text/event-stream')) return new UsageScanner('sse');
+  if (type.includes('json')) return new UsageScanner('json');
+  return new UsageScanner(null);
+}
+
+// `usedTokens` is the complete input of the request just served, so this is a
+// measurement of the last request, never an estimate of a running session.
+function contextOf(usage, limitTokens) {
+  if (!positive(limitTokens) || !Number.isSafeInteger(usage?.inputTokens)) return null;
+  return { usedTokens: usage.inputTokens, limitTokens,
+    ratio: Math.round((usage.inputTokens / limitTokens) * 1000) / 1000, source: 'upstream_usage' };
+}
+
+// Average output rate over the whole request, which is what a user actually
+// waits through: it includes the time before the first byte. It is deliberately
+// NOT a per-token or time-to-first-token figure, and `basis` says so. A
+// cancelled or failed request, a missing usage count, or a zero duration has no
+// honest rate to report, so none is invented.
+function rateOf(record, usage) {
+  if (!record || record.status < 200 || record.status >= 300 || record.error) return null;
+  if (!Number.isSafeInteger(usage?.outputTokens) || !(record.ms > 0)) return null;
+  return { averageOutputTokensPerSecond: Math.round((usage.outputTokens / (record.ms / 1000)) * 100) / 100,
+    basis: 'total_request_time' };
+}
+
 // Kimi decides the API a model talks to from its own name, not from a field:
 // a last segment starting with `kimi-` goes to the Chat endpoint, everything
 // else to Responses. A model that declares the other protocol would be routed
@@ -85,7 +223,39 @@ export function validateModels(models) {
       || !row.reasoningEfforts?.includes(row.defaultEffort))) {
       throw Error('invalid_models');
     }
+    // `contextLimit` is the vendor's own hard maximum when it is actually
+    // documented; `contextWindow` is the budget the user chose and may be
+    // smaller. A budget above a known limit is refused here, so a plan tier
+    // that cannot serve 1M tokens never gets saved as if it could.
+    if (row.contextLimit !== undefined) {
+      if (!positive(row.contextLimit)) throw Error('invalid_models');
+      if (row.contextWindow > row.contextLimit) throw Error('context_window_exceeds_limit');
+    }
+    if (row.metadataSource !== undefined) {
+      if (!row.metadataSource || typeof row.metadataSource !== 'object' || Array.isArray(row.metadataSource)
+        || Object.keys(row.metadataSource).some(key => !METADATA_FIELDS.has(key))
+        || !METADATA_KINDS.has(row.metadataSource.kind)) throw Error('invalid_models');
+      if (row.metadataSource.url !== undefined && !text(row.metadataSource.url)) throw Error('invalid_models');
+      if (row.metadataSource.checkedAt !== undefined
+        && !/^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?$/.test(row.metadataSource.checkedAt)) throw Error('invalid_models');
+    }
+    // A connection reference is stored, never resolved here: the gateway picks
+    // the endpoint per request and a catalog entry must keep working while a
+    // connection is being edited. `upstreamModelId` is what the upstream sees,
+    // so it is validated as an opaque identifier rather than re-derived from
+    // the Kimi-facing `id`.
+    if (row.connectionId !== undefined && (typeof row.connectionId !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(row.connectionId))) throw Error('invalid_models');
+    if (row.upstreamModelId !== undefined && !text(row.upstreamModelId)) throw Error('invalid_models');
     const model = { id, protocol: row.protocol, contextWindow: row.contextWindow };
+    if (row.contextLimit !== undefined) model.contextLimit = row.contextLimit;
+    if (row.metadataSource !== undefined) {
+      model.metadataSource = { kind: row.metadataSource.kind,
+        ...(row.metadataSource.url === undefined ? {} : { url: row.metadataSource.url }),
+        ...(row.metadataSource.checkedAt === undefined ? {} : { checkedAt: row.metadataSource.checkedAt }) };
+    }
+    if (row.connectionId !== undefined) model.connectionId = row.connectionId;
+    if (row.upstreamModelId !== undefined) model.upstreamModelId = row.upstreamModelId;
     const name = text(row.name);
     if (name) model.name = name;
     if (row.maxOutputTokens !== undefined) model.maxOutputTokens = row.maxOutputTokens;
@@ -153,6 +323,10 @@ export class KimiWorkGateway {
       if (record) {
         record.status ??= res.writableEnded ? res.statusCode : 499;
         record.ms = Math.max(0, Date.now() - record.at);
+        // The rate needs the finished measurement and the final status, so it is
+        // computed here rather than while the stream is still being read.
+        const rate = rateOf(record, record.usage);
+        if (rate) record.rate = rate;
         this.metrics.requests++;
         if (record.status >= 400) this.metrics.failures++;
         this.metrics.recent.unshift(record);
@@ -223,8 +397,14 @@ export class KimiWorkGateway {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     this.inflight.add(controller);
-    req.once('aborted', () => controller.abort());
-    res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+    // A client that hangs up before the response finished is a cancellation,
+    // and it is remembered separately: the socket can go away at the same
+    // instant the upstream ends, and `res.destroyed` alone would miss it.
+    let clientGone = false;
+    req.once('aborted', () => { clientGone = true; controller.abort(); });
+    res.once('close', () => {
+      if (!res.writableEnded) { clientGone = true; controller.abort(); }
+    });
     try {
       const models = await this.catalog(controller.signal);
       if (isCatalog) {
@@ -260,10 +440,27 @@ export class KimiWorkGateway {
       if (prefix) model = model.slice(prefix.length);
       const selected = models.find(row => row.id === model);
       if (!selected) { error(409, 'model_not_enabled_for_kimi'); return; }
-      if (req.gatewayRecord) req.gatewayRecord.model = selected.id;
+      const record = req.gatewayRecord;
+      if (record) {
+        record.model = selected.id;
+        record.connectionId = selected.connectionId ?? null;
+        record.upstreamModelId = selected.upstreamModelId ?? null;
+      }
       const protocol = req.url === '/v1/responses' ? 'responses' : 'chat';
       if (selected.protocol !== protocol) { error(409, 'model_protocol_mismatch'); return; }
-      payload = { ...payload, model };
+      // The local id is Kimi's route; the upstream receives the exact model it
+      // declared. A route without `upstreamModelId` keeps its own id, which is
+      // the single-upstream behaviour unchanged.
+      const upstreamModel = selected.upstreamModelId ?? model;
+      payload = { ...payload, model: upstreamModel };
+      const connectionId = selected.connectionId ?? null;
+      // The live backend is the authority on which endpoints this process can
+      // reach; a saved-but-not-restarted connection must fail here rather than
+      // during the upstream write.
+      if (connectionId !== null && !(typeof this.backend.has === 'function' && this.backend.has(connectionId))) {
+        error(503, 'connection_unavailable');
+        return;
+      }
       const blocked = await this.beforeRequest?.(protocol, payload);
       if (blocked) {
         if (blocked.status === 503) res.setHeader('Retry-After', '1');
@@ -282,7 +479,7 @@ export class KimiWorkGateway {
         if (typeof req.headers[name] === 'string') headers[name] = req.headers[name];
       }
       const upstream = await this.backend.request(req.url === '/v1/responses' ? 'responses' : 'chat', payload, {
-        signal: controller.signal, headers,
+        signal: controller.signal, headers, connectionId,
       });
       const replyHeaders = {
         'Content-Type': upstream.headers.get('content-type') || 'application/json',
@@ -293,10 +490,37 @@ export class KimiWorkGateway {
       }
       res.writeHead(upstream.status, replyHeaders);
       res.flushHeaders();
+      // `firstByteMs` is the first byte the upstream sent, not the first token:
+      // TTFT would need SSE event parsing, which is not done here, so the field
+      // says what it actually measured. Usage is read from the same stream
+      // without changing it: the chunk is forwarded before it is scanned.
+      const started = Date.now();
+      const scanner = upstream.ok ? scannerFor(replyHeaders['Content-Type']) : null;
+      let firstByte = true;
       for await (const chunk of upstream.body || []) {
+        if (firstByte) {
+          firstByte = false;
+          if (record) record.firstByteMs = Date.now() - started;
+        }
+        scanner?.push(chunk);
         if (!res.write(chunk)) await once(res, 'drain', { signal: controller.signal });
       }
       res.end();
+      // A client that goes away mid-stream does not always surface as a throw:
+      // the body reader may simply end. The remembered disconnect is the proof,
+      // and a partial stream never reported the complete request's usage.
+      const cancelled = clientGone || controller.signal.aborted || res.destroyed;
+      if (record && cancelled) {
+        record.status = 499;
+        record.error = 'request_cancelled';
+      } else if (record && scanner) {
+        const usage = scanner.finish();
+        if (usage) {
+          record.usage = usage;
+          const context = contextOf(usage, selected.contextWindow);
+          if (context) record.context = context;
+        }
+      }
     } catch (failure) {
       if (req.gatewayRecord) {
         req.gatewayRecord.status = controller.signal.aborted ? 499 : 503;

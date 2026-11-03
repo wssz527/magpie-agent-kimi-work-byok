@@ -52,16 +52,33 @@ export function readSubagentJSON(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-export function writeSubagentJSON(file, value) {
+const digestSubagentJSON = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+export function writeSubagentJSON(file, value, expectedRevision) {
   const directory = path.dirname(file);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (fs.lstatSync(directory).isSymbolicLink()) throw Error('subagent_file_conflict');
-  try { readSubagentJSON(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (expectedRevision === undefined) {
+    try { readSubagentJSON(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  } else if (currentDocumentRevision(file) !== expectedRevision) {
+    throw Error('translation_settings_conflict');
+  }
   const temporary = file + '.' + crypto.randomUUID() + '.tmp';
   try {
     fs.writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
     fs.renameSync(temporary, file);
   } finally { fs.rmSync(temporary, { force: true }); }
+}
+
+// The revision stored inside these documents is a digest of the payload, so it
+// never reflects what is currently on disk. The compare-and-swap guard for
+// writeSubagentJSON therefore uses its own opaque token: the digest of the
+// whole document as it exists right before the rename, so two processes
+// editing the same state file cannot silently drop each other's change (last-
+// writer-wins). Missing files are addressed by the revision `null`.
+export function currentDocumentRevision(file) {
+  try { return digestSubagentJSON(readSubagentJSON(file)); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
 export class SubagentPolicy {

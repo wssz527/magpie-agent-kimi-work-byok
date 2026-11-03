@@ -83,6 +83,13 @@ footer{display:flex;flex-wrap:wrap;justify-content:flex-start;gap:8px;padding:4p
   <div class="field"><span class="state" id="connection-state" role="status">正在检查接入…</span><button type="button" id="connect" disabled>重试接入</button></div>
   <p class="hint">仅接入本机官方 Kimi 桌面 Work，不同步到 Kimi 手机端。</p>
   <p class="hint">模型会自动同步到 Kimi 原生选择器。首次接入可能需要系统授权；请先登录 Kimi Work。</p>
+  <p class="hint">不再使用时，可撤销本插件写入的单域名 DNS 解析（不删除 Kimi 账号、profile 或隐藏入口，不会停用插件）。</p>
+  <div class="actions" id="revoke-box" hidden>
+    <button type="button" id="dns-revoke" disabled>撤销本机 DNS 解析</button>
+    <button type="button" id="dns-revoke-confirm" class="primary" hidden>确认撤销</button>
+    <button type="button" id="dns-revoke-cancel" hidden>取消</button>
+    <span class="note" id="dns-revoke-note" role="status" aria-live="polite"></span>
+  </div>
 </section>
 
 <section aria-labelledby="main-title">
@@ -195,6 +202,9 @@ const STATES = { 'file-applied': '原生配置已写入，等待新请求确认'
   'waiting-idle': '等待 Work 空闲', 'expired-request': '切换请求已过期，请重新切换',
   'invalid-request': '切换请求格式无效，请重新切换', interrupted: '上次切换已中断，请重新切换',
   requested: '已请求切换主模型', failed: '操作失败', stopped: '本机服务已停止', ready: '本机服务已就绪' };
+const REVOKE_STATES = { running: '正在撤销，系统可能请求授权…', done: '已撤销本插件的单域名 DNS 解析',
+  cancelled: '撤销已取消，未做任何改动', failed: '撤销未完成，可重试', 'resolver-conflict': 'DNS 解析内容与本插件记录不一致，未改动',
+  'invalid-request': '撤销请求已过期，请重新操作', 'unsupported-platform': '当前系统不支持此撤销操作' };
 
 let next = 0; const waiting = new Map();
 function call(method, params) {
@@ -204,6 +214,9 @@ function call(method, params) {
     parent.postMessage({ magpie: 1, id, method, params }, '*');
   });
 }
+// One fresh receipt id per confirmed revoke, in the shape the setup receipt
+// already dedupes on, so a repeat click cannot re-run an answered request.
+const revokeRequestID = () => 'dns-revoke-' + crypto.randomUUID();
 function paint(theme) {
   if (!theme) return;
   const root = document.documentElement;
@@ -331,6 +344,7 @@ function render() {
         : reasons[connection.reason] || (connection.reason ? '接入待完成：' + connection.reason : '正在同步模型目录…');
   $('connection-state').dataset.error = String(!connected && ['conflict', 'cancelled', 'failed'].includes(connection.preparation || connection.state));
   $('connect').disabled = !ready || connection.preparing || !connection.retryAvailable;
+  revokeRender();
   revision = data?.revision;
   $('save').disabled = !ready || saving || data?.settings !== 'available' || !data?.models?.length;
   $('main-apply').disabled = !ready || saving || data?.settings !== 'available' || !data?.models?.length;
@@ -370,6 +384,10 @@ function disconnected(error) {
   if ($('tr-save')) $('tr-save').disabled = true;
   if ($('tr-reset')) $('tr-reset').disabled = true;
   if ($('connect')) $('connect').disabled = true;
+  confirmingRevoke = false;
+  revoking = false;
+  if ($('dns-revoke')) $('dns-revoke').disabled = true;
+  if ($('dns-revoke-confirm')) $('dns-revoke-confirm').disabled = true;
 }
 async function load({ keepDraft = false } = {}) {
   const previous = keepDraft && dirty ? draft() : null;
@@ -406,6 +424,34 @@ function tellTranslation(text, kind) {
   node.textContent = text;
   node.dataset.error = String(kind === 'error');
   node.dataset.ok = String(kind === 'ok');
+}
+// The revoke controls live in the connection section and follow the same
+// poll the rest of the page uses: the note reports the run's own final
+// state, not just that the click landed. A finished run leaves the button
+// enabled so the state can be read and the action repeated.
+let revoking = false, confirmingRevoke = false;
+function revokeRender() {
+  const revoke = data?.connection?.dnsRevoke;
+  const busy = revoking || revoke?.state === 'running';
+  // The entry stays visible once the page is ready: a first-time user has
+  // no revoke state yet, and one who already revoked must still be able to
+  // see the result and run it again.
+  $('revoke-box').hidden = !ready;
+  $('dns-revoke').hidden = confirmingRevoke;
+  $('dns-revoke').disabled = !ready || busy || confirmingRevoke;
+  $('dns-revoke-confirm').hidden = !confirmingRevoke;
+  $('dns-revoke-confirm').disabled = busy;
+  $('dns-revoke-cancel').hidden = !confirmingRevoke;
+  $('dns-revoke-note').textContent = busy ? REVOKE_STATES.running
+    : confirmingRevoke ? '确认只移除本插件写入的单域名解析；需要系统授权。'
+      : revoke ? (REVOKE_STATES[revoke.state] || revoke.state)
+        + (revoke.state === 'done' ? '；重新接入时会在系统授权后重新写入。' : '') : '';
+  $('dns-revoke-note').dataset.error = String(['failed', 'resolver-conflict', 'invalid-request', 'unsupported-platform'].includes(revoke?.state));
+  $('dns-revoke-note').dataset.ok = String(revoke?.state === 'done');
+}
+function askRevoke(show) {
+  confirmingRevoke = Boolean(show);
+  revokeRender();
 }
 const TR_STATES = { disabled: '思考翻译已关闭', 'not-started': '已保存，等待 Kimi 以本插件启动后接入',
   starting: '正在启动翻译宿主', attaching: '正在接入已打开的 Chat / Work 思考区',
@@ -569,6 +615,21 @@ $('connect').addEventListener('click', async () => {
     await load({ keepDraft: dirty });
   } catch (error) { tell(error.message || '接入未完成，请重试。', 'error'); }
   finally { if (ready) $('connect').disabled = Boolean(data?.connection?.preparing); }
+});
+// One click only arms the inline confirmation; nothing is sent until the
+// confirm button is pressed, and cancel puts the row back without a call.
+$('dns-revoke').addEventListener('click', () => { if (ready) askRevoke(true); });
+$('dns-revoke-cancel').addEventListener('click', () => { askRevoke(false); });
+$('dns-revoke-confirm').addEventListener('click', async () => {
+  if (!ready || revoking) return;
+  revoking = true;
+  askRevoke(false);
+  try {
+    await api('/api/setup', { method: 'POST', body: JSON.stringify({ id: revokeRequestID(), at: Date.now() }) });
+    tell('已请求撤销本机 DNS 解析；系统授权后生效。');
+  } catch (error) { tell(error.message || '撤销未完成，请稍后重试。', 'error'); }
+  revoking = false;
+  await load({ keepDraft: dirty }).catch(() => {});
 });
 $('mode').addEventListener('change', () => { dirty = true; modes(); });
 $('main-model').addEventListener('change', () => { dirty = true; });

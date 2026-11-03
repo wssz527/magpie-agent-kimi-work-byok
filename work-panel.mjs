@@ -78,6 +78,10 @@ const MESSAGES = {
   translation_settings_owner_conflict: '另一个插件实例正在管理翻译设置，未保存。',
   translation_settings_unavailable: '无法写入翻译设置，请检查状态目录后重试。',
   translation_status_unavailable: '无法读取翻译运行状态。',
+  dns_revoke_invalid: '撤销请求格式无效，请刷新页面后重试。',
+  dns_revoke_owner_conflict: '另一个插件实例正在管理本机接入，未执行撤销。',
+  dns_revoke_stopping: '插件正在停止，请稍后重试。',
+  dns_revoke_unavailable: '本机接入尚未启用，无法撤销 DNS 解析。',
   save_failed: '保存未完成，请稍后重试。',
 };
 const SAVE_CODES = new Set(['work_settings_conflict', 'work_settings_unavailable', 'work_settings_invalid',
@@ -95,6 +99,10 @@ const statusFor = code => code === 'work_settings_conflict' || code === 'work_no
 // A refused call may carry its code as `.code` or as its message, which is
 // how the adapter's own errors are written; nothing else is passed on.
 const failureCode = error => [error?.code, error?.message].find(value => typeof value === 'string' && PLAIN.test(value));
+const DNS_REVOKE_CODES = new Set(['dns_revoke_invalid', 'dns_revoke_owner_conflict', 'dns_revoke_stopping',
+  'dns_revoke_unavailable']);
+const dnsRevokeStatusFor = code => code === 'dns_revoke_owner_conflict' ? 409
+  : code === 'dns_revoke_invalid' ? 400 : 503;
 const translationStatusFor = code => code === 'translation_settings_conflict' || code === 'translation_scope_conflict'
   || code === 'translation_settings_owner_conflict' ? 409
   : /^invalid_translation_/.test(code) || code === 'translation_endpoint_required' ? 400 : 503;
@@ -323,7 +331,10 @@ export class WorkPanel {
           ? this.adapter.desktop?.inspect()?.reason || 'native_bridge_waiting_launch'
           : this.adapter.nativeIntegrationStatus?.nativeImport?.reason || this.adapter.nativeIntegrationStatus?.reason),
         preparing: Boolean(this.adapter.onboardingTask), preparation: plain(this.adapter.onboardingStatus?.state),
-        retryAvailable: typeof this.adapter.requestNativeConnection === 'function' },
+        retryAvailable: typeof this.adapter.requestNativeConnection === 'function',
+        ...(plain(this.adapter.dnsRevokeStatus?.()?.state) ? { dnsRevoke: { action: 'remove-dns',
+          state: plain(this.adapter.dnsRevokeStatus().state),
+          ...(plain(this.adapter.dnsRevokeStatus().stage) ? { stage: plain(this.adapter.dnsRevokeStatus().stage) } : {}) } } : {}) },
       service: { state: this.publication.state, ...(this.publication.reason ? { reason: this.publication.reason } : {}) },
     };
   }
@@ -595,6 +606,36 @@ export class WorkPanel {
       if (Object.keys(input).length) return this.refuse(res, 400, 'invalid_json', cors);
       if (typeof this.adapter.requestNativeConnection !== 'function') return this.refuse(res, 503, 'work_not_connected', cors);
       this.reply(res, 202, { ok: true, operation: this.adapter.requestNativeConnection() }, cors);
+      return;
+    }
+    // The one-click DNS revoke is the only setup action this page may start:
+    // the action itself is fixed by the adapter, so the page sends just a
+    // fresh receipt id. Only a legitimate receipt reaches the adapter — the
+    // shape the setup receipt dedupes on — and a repeat of a running or
+    // answered request is answered from the run, never with a second prompt.
+    if (pathname === '/api/setup') {
+      if (req.method !== 'POST') return this.refuse(res, 405, 'method_not_allowed', cors);
+      if (typeof this.adapter?.revokeNativeDNS !== 'function') return this.refuse(res, 503, 'dns_revoke_unavailable', cors);
+      if (this.revokeSaving) {
+        // One setup at a time, but a repeat of the run is the run: the page
+        // is told it is observable, not that a save is in the way.
+        return this.reply(res, 202, { ok: true, revoke: { action: 'remove-dns', state: 'running' } }, cors);
+      }
+      this.revokeSaving = true;
+      try {
+        const body = await readJSON(req);
+        for (const key of Object.keys(body)) if (key !== 'id' && key !== 'at') throw refusal(400, 'dns_revoke_invalid');
+        if (typeof body.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(body.id)
+          || typeof body.at !== 'number' || !Number.isFinite(body.at)) throw refusal(400, 'dns_revoke_invalid');
+        this.reply(res, 202, { ok: true, revoke: await this.adapter.revokeNativeDNS({ id: body.id, at: body.at }) }, cors);
+      } catch (failure) {
+        if (failure?.code === 'invalid_json' || failure?.code === 'json_required' || failure?.code === 'request_too_large') {
+          return this.refuse(res, failure.status, failure.code, cors);
+        }
+        const reported = failureCode(failure);
+        const code = reported && DNS_REVOKE_CODES.has(reported) ? reported : 'dns_revoke_unavailable';
+        this.refuse(res, failure?.status || dnsRevokeStatusFor(code), code, cors);
+      } finally { this.revokeSaving = false; }
       return;
     }
     if (pathname === '/api/translation') {
